@@ -1,0 +1,11 @@
+# compiled engine binaries (produced by install.sh)
+src/vgmjuke
+src/gmejuke
+*.o
+
+# runtime state
+buttons.json
+
+# python
+__pycache__/
+*.pyc
