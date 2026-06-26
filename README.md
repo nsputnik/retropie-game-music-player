@@ -25,8 +25,10 @@ use. This project gives you a real jukebox:
     System music.
   - `gmejuke` (built on **[libgme / game-music-emu](https://github.com/libgme/game-music-emu)**)
     plays CPU-emulated formats — **NSF / NSFE / GBS / SPC / AY / HES / KSS / SAP**.
-- **Folder = album.** Selecting a track queues every track in its folder. For NSF
-  and other multi-song files, the **subtunes** become the track list.
+- **Folder = album.** Selecting a track queues every track in its folder. Track
+  names come from the **filenames**, so file-per-song formats (VGZ/VGM/GYM/…) show
+  real track titles. **NSF and other multi-subtune files** store no per-track
+  names, so their subtunes show as numbered entries (*Track 1…N*).
 - **Box art** is reused from your existing console game systems' scraped art
   (`roms/nes/images`, `roms/megadrive/images`, …) — the player only *displays*
   existing art, it never goes online.
@@ -86,6 +88,10 @@ Restart EmulationStation to register new files. Good sources: rips from
 and NSFs from [Zophar's Domain](https://www.zophar.net/music).
 
 ![nsf](docs/screenshot-nsf.png)
+
+*An NSF album: its subtunes appear as numbered tracks (**Track 1…N**) because the
+NSF format stores no per-track names — unlike the file-per-song formats above,
+where each song's filename becomes its title.*
 
 ## Box art
 
