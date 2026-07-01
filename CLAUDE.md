@@ -69,8 +69,23 @@ no console-art fallback, so they show art only if an album `folder.png` is prese
 ## New categories seeded (2026-06)
 - `C64/` — curated HVSC top-composer albums (SID). Full HVSC is 61k tunes — curate!
 - `Amiga/` — tracker `.mod` albums.
-- `DOS/` — Sierra/LucasArts General-MIDI (Monkey Island, Space/Police/King's Quest…).
-  MT-32 versions are stashed outside the library pending an `mt32juke` (Munt) engine.
+
+### PC/DOS is organized by SYNTH, not platform (categories map to engines)
+"DOS" was too broad — it spans three different synthesis models needing three
+engines. So the top-level category IS the synth:
+
+| Category | Files | Engine |
+|---|---|---|
+| `General MIDI/` | `.mid` | `gmjuke` (FluidSynth + SC-55 SF2) — **live** |
+| `MT-32/` | `.mid` | `mt32juke` (Munt + ROMs) — **not built yet** |
+| `AdLib/` | `.dro` / `.vgm` | `vgmjuke` — works today (OPL2 is FM register data, **not MIDI**) |
+
+- MT-32 vs GM are both `.mid`; distinguish by SysEx if needed (MT-32: `F0 41 10 16 12…`;
+  GM/GS reset: `F0 7E 7F 09 01` / `F0 41 10 42 12…`) — but **route by folder**, not sniffing.
+- **TODO — category-aware `.mid` routing:** `jukebox.py` currently routes `.mid` →
+  `gmjuke` by extension only. When `mt32juke` lands, route by category: a MIDI whose
+  category folder is `MT-32` → `mt32juke`, else → `gmjuke`. Until then MT-32 content is
+  kept OUT of the Pi (it would play wrong through the GM SoundFont).
 
 ## Planned next engines (design agreed, not built)
 - `mt32juke` — Munt / libmt32emu (source build, user-supplied MT-32 ROMs) for the
