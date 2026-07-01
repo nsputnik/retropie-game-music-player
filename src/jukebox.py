@@ -34,6 +34,9 @@ import queue
 HERE = os.path.dirname(os.path.abspath(__file__))
 ENGINE_VGM = os.path.join(HERE, "vgmjuke")   # libvgm: VGM/VGZ/...
 ENGINE_GME = os.path.join(HERE, "gmejuke")   # libgme: NSF/GBS/...
+ENGINE_MOD = os.path.join(HERE, "modjuke")   # libopenmpt: MOD/XM/S3M/IT/...
+ENGINE_SID = os.path.join(HERE, "sidjuke")   # libsidplayfp: SID/PSID
+ENGINE_GM = os.path.join(HERE, "gmjuke")     # FluidSynth: MID/MIDI (GM)
 BTN_MAP_FILE = os.path.join(HERE, "buttons.json")
 JS_DEV = "/dev/input/js0"
 FB_DEV = "/dev/fb0"
@@ -57,11 +60,42 @@ LOOP_MODES = ["oo", "0", "1", "2", "3", "4"]
 DEFAULT_LOOP_INDEX = 3          # start at "2"
 FADE_SECONDS = 4.0              # fade for finite loop modes
 
-# Register-log formats -> libvgm (vgmjuke), one song per file.
-# CPU-emulated formats -> libgme (gmejuke), many subtunes per file.
+# Each engine is one of two kinds:
+#   "sibling" - one song per file; the album folder's files are the queue and
+#               filenames are the track names (VGM/VGZ, MOD, MIDI).
+#   "subtune" - one file holds many subtunes, queried via --info/--track and
+#               shown as numbered tracks (NSF/GBS/..., SID).
 VGM_EXTS = (".vgz", ".vgm", ".gym", ".s98", ".dro")
 GME_EXTS = (".nsf", ".nsfe", ".gbs", ".spc", ".ay", ".hes", ".kss", ".sap")
-AUDIO_EXTS = VGM_EXTS + GME_EXTS
+MOD_EXTS = (".mod", ".xm", ".s3m", ".it", ".mtm", ".mptm", ".med", ".stm",
+            ".okt", ".ptm", ".dbm", ".digi", ".ahx", ".hvl", ".mo3", ".umx")
+SID_EXTS = (".sid", ".psid")
+MIDI_EXTS = (".mid", ".midi", ".rmi")
+
+# (engine binary, its extensions, kind). Order = match priority.
+_ENGINE_SPECS = [
+    (ENGINE_VGM, VGM_EXTS, "sibling"),
+    (ENGINE_GME, GME_EXTS, "subtune"),
+    (ENGINE_MOD, MOD_EXTS, "sibling"),
+    (ENGINE_SID, SID_EXTS, "subtune"),
+    (ENGINE_GM, MIDI_EXTS, "sibling"),
+]
+
+
+def _build_ext_map():
+    """ext -> (engine, kind), including only engines whose binary is present.
+    Fail-soft: an engine that didn't build just drops its formats."""
+    m = {}
+    for engine, exts, kind in _ENGINE_SPECS:
+        if not os.path.exists(engine):
+            continue
+        for e in exts:
+            m.setdefault(e, (engine, kind))
+    return m
+
+
+EXT_ENGINE = _build_ext_map()
+AUDIO_EXTS = tuple(EXT_ENGINE.keys())
 
 # Box art is reused from the matching console ROM system's images/ folder.
 # gme category folder name -> RetroPie system name (roms/<system>/images).
@@ -498,11 +532,12 @@ class Jukebox:
 # ----------------------------------------------------------------------------
 # Main
 # ----------------------------------------------------------------------------
-def gme_subtunes(rom_path):
-    """Query gmejuke for an NSF/GBS/... file's subtunes. Returns entries or None."""
+def subtunes(engine, rom_path):
+    """Query an engine (--info) for a multi-subtune file (NSF/GBS/SID/...).
+    Returns entries or None."""
     try:
         out = subprocess.check_output(
-            [ENGINE_GME, "--info", rom_path],
+            [engine, "--info", rom_path],
             universal_newlines=True, stderr=subprocess.DEVNULL)
     except Exception:
         return None
@@ -525,27 +560,36 @@ def gme_subtunes(rom_path):
                 names[i] = nm
     if count <= 0:
         return None
-    return [{"engine": ENGINE_GME, "file": rom_path, "track": i,
+    return [{"engine": engine, "file": rom_path, "track": i,
              "name": names.get(i, "Track %d" % i)} for i in range(1, count + 1)]
 
 
 def build_playlist(rom_path):
-    """Return (entries, start_index). VGM albums = sibling files; NSF/GBS/...
-    albums = the file's subtunes."""
+    """Return (entries, start_index). Sibling-file engines (VGM/MOD/MIDI) queue
+    every file in the album folder; subtune engines (NSF/SID/...) queue the
+    file's subtunes. The engine is chosen from the file extension, and only
+    engines whose binary is present are routable (see EXT_ENGINE)."""
     ext = os.path.splitext(rom_path)[1].lower()
-    if ext in GME_EXTS:
-        entries = gme_subtunes(rom_path)
+    spec = EXT_ENGINE.get(ext)
+    if spec is None:
+        return [], 0
+    engine, kind = spec
+
+    if kind == "subtune":
+        entries = subtunes(engine, rom_path)
         if entries:
             return entries, 0
         # fallback: play the file as a single track
         name = os.path.splitext(os.path.basename(rom_path))[0]
-        return [{"engine": ENGINE_GME, "file": rom_path,
+        return [{"engine": engine, "file": rom_path,
                  "track": 1, "name": name}], 0
 
+    # sibling: queue every file in the album folder handled by this same engine
     album_dir = os.path.dirname(rom_path)
-    files = [f for f in os.listdir(album_dir) if f.lower().endswith(VGM_EXTS)]
+    sib_exts = tuple(e for e, (eng, _k) in EXT_ENGINE.items() if eng == engine)
+    files = [f for f in os.listdir(album_dir) if f.lower().endswith(sib_exts)]
     files.sort(key=natural_key)
-    entries = [{"engine": ENGINE_VGM, "file": os.path.join(album_dir, f),
+    entries = [{"engine": engine, "file": os.path.join(album_dir, f),
                 "track": None, "name": os.path.splitext(f)[0]} for f in files]
     sel = os.path.basename(rom_path)
     idx = next((k for k, f in enumerate(files) if f == sel), 0)

@@ -70,6 +70,39 @@ g++ -O2 -I"$SRC/libvgm" -I"$SRC/game-music-emu" "$HERE/src/gmejuke.cpp" \
     -Wl,--start-group -lgme -lvgm-audio -lvgm-utils -Wl,--end-group \
     -lasound -lpthread -lz
 
+# --- 4b. optional extra engines (MOD / SID / GM-MIDI) -------------------------
+# These wrap apt-packaged libraries (no source build) and render PCM straight to
+# ALSA. Each is FAIL-SOFT: if its dev package is missing or it won't compile, we
+# skip just that engine (the jukebox then drops those file types) and keep going.
+echo "==> Installing extra engine deps (sudo apt; non-fatal)"
+sudo apt-get install -y libopenmpt-dev libsidplayfp-dev libfluidsynth-dev \
+    pkg-config || echo "!! some extra engine dev packages unavailable; those engines will be skipped"
+
+build_extra_engine() {  # name  source.cpp  pkgconfig-name
+    local name="$1" src="$2" pkg="$3" flags
+    flags="$(pkg-config --cflags --libs "$pkg" 2>/dev/null)" || flags=""
+    [ -z "$flags" ] && flags="-l${pkg#lib}"   # fallback if no .pc file
+    echo "==> Compiling $name ($pkg)"
+    if g++ -O2 "$HERE/src/$src" -o "$INSTALL_DIR/$name" $flags -lasound; then
+        chmod +x "$INSTALL_DIR/$name"
+        echo "    $name OK"
+    else
+        rm -f "$INSTALL_DIR/$name"
+        echo "!! $name failed to build - its formats will be unavailable (non-fatal)"
+    fi
+}
+
+build_extra_engine modjuke modjuke.cpp libopenmpt      # MOD/XM/S3M/IT/...
+build_extra_engine sidjuke sidjuke.cpp libsidplayfp    # SID/PSID
+build_extra_engine gmjuke  gmjuke.cpp  fluidsynth      # MID/MIDI (General MIDI)
+
+# gmjuke needs a General MIDI SoundFont (SC-55 style). Drop a .sf2 in here (or
+# set $GMJUKE_SF2); MIDI playback is skipped until one is present.
+mkdir -p "$INSTALL_DIR/soundfonts"
+if ! ls "$INSTALL_DIR/soundfonts/"*.sf2 >/dev/null 2>&1 && [ ! -f "$INSTALL_DIR/gm.sf2" ]; then
+    echo "!! no GM SoundFont in $INSTALL_DIR/soundfonts/ - MIDI stays silent until you add one"
+fi
+
 # --- 5. install the player ----------------------------------------------------
 echo "==> Installing player files into $INSTALL_DIR"
 cp "$HERE/src/jukebox.py" "$INSTALL_DIR/jukebox.py"

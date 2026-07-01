@@ -18,13 +18,24 @@ RetroPie has no built-in way to just *listen* to game music. Libretro's
 no loop control), and it can't synthesize the arcade/Genesis chips that VGM rips
 use. This project gives you a real jukebox:
 
-- **Two engines, picked automatically by file type:**
+- **Multiple engines, picked automatically by file type:**
   - `vgmjuke` (built on **[libvgm](https://github.com/ValleyBell/libvgm)**) plays
     register-log formats — **VGM / VGZ / GYM / S98 / DRO** — with full chip support
     (YM2151, YM2612, SN76489, RF5C68, SegaPCM, …) for arcade, Genesis and Master
     System music.
   - `gmejuke` (built on **[libgme / game-music-emu](https://github.com/libgme/game-music-emu)**)
     plays CPU-emulated formats — **NSF / NSFE / GBS / SPC / AY / HES / KSS / SAP**.
+  - `modjuke` (built on **[libopenmpt](https://lib.openmpt.org/libopenmpt/)**)
+    plays Amiga/tracker modules — **MOD / XM / S3M / IT / MED / AHX / …**.
+  - `sidjuke` (built on **[libsidplayfp](https://github.com/libsidplayfp/libsidplayfp)**)
+    plays Commodore 64 **SID / PSID** (multi-subtune, like NSF).
+  - `gmjuke` (built on **[FluidSynth](https://www.fluidsynth.org/)**) plays
+    General MIDI **MID / MIDI** using an SC-55-style GM SoundFont you supply
+    (this is the authentic playback path for AWE32/GM-era DOS & Windows game music).
+
+  The last three wrap apt-packaged libraries and are **optional / fail-soft**:
+  if a library or SoundFont is missing, that engine is skipped and its formats
+  simply don't appear — the core VGM/GME engines are unaffected.
 - **Folder = album.** Selecting a track queues every track in its folder. Track
   names come from the **filenames**, so file-per-song formats (VGZ/VGM/GYM/…) show
   real track titles. **NSF and other multi-subtune files** store no per-track
@@ -56,6 +67,14 @@ numbers (it varies by pad) and saves them next to the player.
 > **libvgm and libgme are prerequisites**, but you do **not** install them by
 > hand and they are **not** bundled here — `install.sh` clones and compiles them
 > locally (they have their own licenses).
+
+The optional MOD/SID/MIDI engines use apt-packaged libraries that `install.sh`
+adds automatically (`libopenmpt-dev libsidplayfp-dev libfluidsynth-dev`); if any
+are unavailable the build skips just that engine. **MIDI needs a General MIDI
+SoundFont** — drop an SC-55-style `.sf2` in
+`/opt/retropie/emulators/gamemusic/soundfonts/` (or set `$GMJUKE_SF2`); until you
+do, `.mid` files stay silent. If a `.mid` has an identically-named `.sf2` beside
+it, `gmjuke` loads it into bank 1 for AWE32-style MIDI+SoundFont pairs.
 
 ## Install
 
