@@ -36,14 +36,21 @@ use. This project gives you a real jukebox:
   The last three wrap apt-packaged libraries and are **optional / fail-soft**:
   if a library or SoundFont is missing, that engine is skipped and its formats
   simply don't appear — the core VGM/GME engines are unaffected.
+- **SNES `.rsn` support.** SNES sets ship as `.rsn` (a RAR of `.spc` + `info.txt`).
+  The player unpacks them on launch (via `unar`) and plays the SPCs as an album —
+  drop `.rsn` files in as-downloaded, no manual extraction.
 - **Folder = album.** Selecting a track queues every track in its folder. Track
   names come from the **filenames**, so file-per-song formats (VGZ/VGM/GYM/…) show
-  real track titles. **NSF and other multi-subtune files** store no per-track
-  names, so their subtunes show as numbered entries (*Track 1…N*).
-- **Box art** is reused from your existing console game systems' scraped art
-  (`roms/nes/images`, `roms/megadrive/images`, …) — the player only *displays*
-  existing art, it never goes online.
-- **Live loop control, continuous/single play, prev/next** — all from the pad.
+  real track titles. **SPC** files show their **ID666 song title**; **NSF and other
+  multi-subtune files** store no per-track names, so their subtunes show as numbered
+  entries (*Track 1…N*).
+- **Box art** — per-album `folder.png` (preferred), else reused from your existing
+  console systems' scraped art (`roms/nes/images`, …). `tools/fetch-art.py` can
+  fill gaps from libretro-thumbnails. The player only *displays* art, never fetches
+  at runtime.
+- **Four play modes** (cycle with Select): **Single**, **Album**, **All** (roll into
+  the next folder at album end), **Shuffle** (jump to a random folder) — plus live
+  loop control and prev/next, all from the pad.
 
 ## Controls
 
@@ -98,8 +105,10 @@ Drop rips under the `gme` roms folder, organised as `Category/Album/tracks`:
 ├── Arcade/Rastan (Arcade)/01 - Aggressive World.vgz
 ├── Genesis/Sonic the Hedgehog/01 Title.vgz
 ├── Master System/Phantasy Star (FM)/01 Title.vgm
-└── NES/Mega Man 2 (NES)/01 Opening.vgz
-    NES/Bionic Commando (NES)/Bionic Commando (NES).nsf   # multi-subtune file
+├── NES/Mega Man 2 (NES)/01 Opening.vgz
+├── NES/Bionic Commando (NES)/Bionic Commando (NES).nsf   # multi-subtune file
+├── SNES/Chrono Trigger (SNES).rsn                        # RAR of .spc (auto-unpacked)
+└── AdLib/Games/Dune/01 Sietch.vgz                        # OPL2 (.vgz/.vgm)
 ```
 
 Restart EmulationStation to register new files. Good sources: rips from
@@ -131,7 +140,9 @@ Standalone, run-by-hand utilities — **not** part of the player runtime — for
 filling gaps using [libretro-thumbnails](https://github.com/libretro-thumbnails)
 (no account/key):
 
-- **`fetch-art.py`** — download a cover into each music album that has none.
+- **`fetch-art.py`** — download a cover (`folder.png`) into each music album that
+  has none. Handles nested categories and tries multiple thumbnail systems per
+  album (e.g. AdLib → DOS/MAME/FBNeo); `--category X` restricts the run.
 - **`scrape-system.py`** — fetch art + build a gamelist for a whole console ROM
   system (e.g. Master System).
 - **`make-gamelist.py`** — write `<image>` tags into the `gme` gamelist so covers
