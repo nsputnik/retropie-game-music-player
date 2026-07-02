@@ -58,6 +58,9 @@ box art for containers isn't wired (find_box_art still assumes Category/Album/tr
 SPC track names come from each file's **ID666 song title** (text tag @ offset 0x2E)
 via `track_name()`, falling back to the filename — so SNESmusic.org sets show real
 song names (e.g. "Yoshi's Island") without renaming/repacking the archives.
+`tools/rename-rsn.py` renames abbreviated packs (smw.rsn) to the title in each
+archive's info.txt line 1 ("Super Mario World (SNES).rsn"); the .rsn album name
+is what the jukebox shows (main() strips the trailing "(SNES)" for display).
 
 ## Deployment reality (IMPORTANT — differs from install.sh defaults)
 `install.sh` defaults `INSTALL_DIR=/opt/retropie/emulators/gamemusic`, **but the

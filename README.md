@@ -134,11 +134,12 @@ fetches anything:
 So if your console systems are already scraped (Skyscraper, the built-in
 scraper, etc.), the music gets art for free.
 
-### Optional art helpers (`tools/`)
+### Optional helpers (`tools/`)
 
-Standalone, run-by-hand utilities — **not** part of the player runtime — for
-filling gaps using [libretro-thumbnails](https://github.com/libretro-thumbnails)
-(no account/key):
+Standalone, run-by-hand utilities — **not** part of the player runtime.
+
+Box art (from [libretro-thumbnails](https://github.com/libretro-thumbnails), no
+account/key):
 
 - **`fetch-art.py`** — download a cover (`folder.png`) into each music album that
   has none. Handles nested categories and tries multiple thumbnail systems per
@@ -147,6 +148,13 @@ filling gaps using [libretro-thumbnails](https://github.com/libretro-thumbnails)
   system (e.g. Master System).
 - **`make-gamelist.py`** — write `<image>` tags into the `gme` gamelist so covers
   show while *browsing* the Game Music menu (run with EmulationStation stopped).
+
+Library tidy-up:
+
+- **`rename-rsn.py`** — rename SNES `.rsn` sets from their abbreviations
+  (`smw.rsn`) to the real game title read from each archive's own `info.txt`
+  (`Super Mario World (SNES).rsn`). Dry-run by default; `--apply` to rename. The
+  `.rsn` files aren't unpacked or modified.
 
 ## How it works
 
