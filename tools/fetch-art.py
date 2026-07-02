@@ -6,6 +6,10 @@ libretro-thumbnails Named_Boxarts index and download the cover to
 <album>/folder.png (which the jukebox prefers). No account or API key needed --
 this is the same source the rest of the RetroPie art was scraped from.
 
+Handles both flat categories (Category/<album>) and nested ones
+(Category/<sub>/<album>, e.g. AdLib/Games/<game>), and can try several thumbnail
+systems per album (AdLib mixes DOS and arcade titles).
+
 Usage: fetch-art.py [--all] [--root DIR]
   --all   also write folder.png for albums that already resolve art from a
           console images/ folder, making the gme library fully self-contained.
@@ -19,15 +23,22 @@ import urllib.request
 import urllib.parse
 
 DEFAULT_ROOT = os.path.expanduser("~/RetroPie/roms/gme")
-JUKEBOX_DIR = os.environ.get("GME_PLAYER_DIR", "/opt/retropie/emulators/gamemusic")
+JUKEBOX_DIR = os.environ.get("GME_PLAYER_DIR", "/opt/retropie/emulators/vgmplay")
 UA = {"User-Agent": "gme-fetch-art"}
 
-# gme category folder -> libretro-thumbnails per-system repository
+# Flat categories: gme category folder -> a single libretro-thumbnails repo.
 REPOS = {
     "NES": "Nintendo_-_Nintendo_Entertainment_System",
     "Genesis": "Sega_-_Mega_Drive_-_Genesis",
     "Master System": "Sega_-_Master_System_-_Mark_III",
     "Arcade": "MAME",
+}
+
+# Nested categories: albums live one level deeper (Category/<sub>/<album>) and
+# may match several thumbnail systems, tried in order.
+#   category -> (subfolder, [repo, ...])
+NESTED = {
+    "AdLib": ("Games", ["DOS", "MAME", "FBNeo_-_Arcade_Games"]),
 }
 
 
@@ -70,15 +81,16 @@ def get_boxart_list(repo):
 
 
 def pick(album, files):
-    """Choose the best Named_Boxart for an album, preferring USA/Europe English."""
+    """Best Named_Boxart for an album within one repo (exact preferred), or None."""
     targets = candidate_targets(strip_paren_suffix(album))
     exact, loose = [], []
     for f in files:
         nb = normalize(strip_all_parens(os.path.splitext(f)[0]))
         if nb in targets:
             exact.append(f)
-        elif any(nb.startswith(t) or t.startswith(nb) for t in targets):
-            loose.append(f)
+        elif any(len(nb) >= 5 and len(t) >= 5 and (nb.startswith(t) or t.startswith(nb))
+                 for t in targets):
+            loose.append(f)   # guard tiny names (e.g. "Z" vs "Zoop")
     pool = exact or loose
     if not pool:
         return None
@@ -101,6 +113,25 @@ def pick(album, files):
     return sorted(pool, key=score)[0]
 
 
+def pick_across(album, repo_files):
+    """Choose across several repos: prefer a repo with an EXACT match (in order),
+    else the first repo with any (loose) match. Returns (repo, filename)|(None,None)."""
+    targets = candidate_targets(strip_paren_suffix(album))
+
+    def is_exact(f):
+        return normalize(strip_all_parens(os.path.splitext(f)[0])) in targets
+
+    for repo, files in repo_files:                 # pass 1: exact
+        f = pick(album, files)
+        if f and is_exact(f):
+            return repo, f
+    for repo, files in repo_files:                 # pass 2: loose
+        f = pick(album, files)
+        if f:
+            return repo, f
+    return None, None
+
+
 def has_art(album_dir):
     for c in ("folder.png", "box.png", "cover.png"):
         if os.path.isfile(os.path.join(album_dir, c)):
@@ -114,11 +145,40 @@ def has_art(album_dir):
     return False
 
 
+def iter_albums(root, only=None):
+    """Yield (label, album_dir, [repo, ...]) for every album to consider.
+    If `only` is set, restrict to that category folder."""
+    for cat in sorted(os.listdir(root)):
+        if only and cat != only:
+            continue
+        cp = os.path.join(root, cat)
+        if not os.path.isdir(cp):
+            continue
+        if cat in NESTED:
+            sub, repos = NESTED[cat]
+            base = os.path.join(cp, sub)
+            if not os.path.isdir(base):
+                continue
+            for album in sorted(os.listdir(base)):
+                adir = os.path.join(base, album)
+                if os.path.isdir(adir):
+                    yield ("%s/%s/%s" % (cat, sub, album), adir, repos)
+        else:
+            repo = REPOS.get(cat)
+            repos = [repo] if repo else []
+            for album in sorted(os.listdir(cp)):
+                adir = os.path.join(cp, album)
+                if os.path.isdir(adir):
+                    yield ("%s/%s" % (cat, album), adir, repos)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--all", action="store_true",
                         help="fetch even where console images already match")
     parser.add_argument("--root", default=DEFAULT_ROOT)
+    parser.add_argument("--category", default=None,
+                        help="restrict to a single gme category (e.g. AdLib)")
     args = parser.parse_args()
     if os.path.isdir(JUKEBOX_DIR):
         sys.path.insert(0, JUKEBOX_DIR)
@@ -126,46 +186,42 @@ def main():
     cache = {}
     hit = skip = 0
     misses = []
-    for cat in sorted(os.listdir(args.root)):
-        cp = os.path.join(args.root, cat)
-        if not os.path.isdir(cp):
+    for label, adir, repos in iter_albums(args.root, args.category):
+        album = os.path.basename(adir)
+        dest = os.path.join(adir, "folder.png")
+        if os.path.isfile(dest):
+            skip += 1
             continue
-        repo = REPOS.get(cat)
-        for album in sorted(os.listdir(cp)):
-            adir = os.path.join(cp, album)
-            if not os.path.isdir(adir):
-                continue
-            dest = os.path.join(adir, "folder.png")
-            if os.path.isfile(dest):
-                skip += 1
-                continue
-            if not args.all and has_art(adir):
-                skip += 1
-                continue
-            if not repo:
-                misses.append("%s/%s (no repo mapping)" % (cat, album))
-                continue
+        if not args.all and has_art(adir):
+            skip += 1
+            continue
+        if not repos:
+            misses.append("%s (no repo mapping)" % label)
+            continue
+        rf = []
+        for repo in repos:
             if repo not in cache:
                 try:
                     cache[repo] = get_boxart_list(repo)
                 except Exception as e:
                     print("! index fetch failed for %s: %s" % (repo, e))
                     cache[repo] = []
-            f = pick(album, cache[repo])
-            if not f:
-                misses.append("%s/%s" % (cat, album))
-                continue
-            raw = ("https://raw.githubusercontent.com/libretro-thumbnails/%s"
-                   "/master/Named_Boxarts/%s" % (repo, urllib.parse.quote(f)))
-            try:
-                with urllib.request.urlopen(urllib.request.Request(raw, headers=UA), timeout=30) as r:
-                    blob = r.read()
-                with open(dest, "wb") as out:
-                    out.write(blob)
-                hit += 1
-                print("OK   %s/%s  <-  %s" % (cat, album, f))
-            except Exception as e:
-                misses.append("%s/%s (download: %s)" % (cat, album, e))
+            rf.append((repo, cache[repo]))
+        repo, f = pick_across(album, rf)
+        if not f:
+            misses.append(label)
+            continue
+        raw = ("https://raw.githubusercontent.com/libretro-thumbnails/%s"
+               "/master/Named_Boxarts/%s" % (repo, urllib.parse.quote(f)))
+        try:
+            with urllib.request.urlopen(urllib.request.Request(raw, headers=UA), timeout=30) as r:
+                blob = r.read()
+            with open(dest, "wb") as out:
+                out.write(blob)
+            hit += 1
+            print("OK   %s  <-  [%s] %s" % (label, repo, f))
+        except Exception as e:
+            misses.append("%s (download: %s)" % (label, e))
 
     print("\nfetched %d, skipped %d (already had art), missed %d"
           % (hit, skip, len(misses)))

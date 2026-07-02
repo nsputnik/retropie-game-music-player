@@ -22,6 +22,7 @@ import time
 import select
 import signal
 import struct
+import random
 import shutil
 import tempfile
 import threading
@@ -60,6 +61,15 @@ DEFAULT_BMAP = {"A": 0, "B": 1, "SELECT": 6, "L": 4, "R": 5}
 # Loop modes shown in the UI, in cycle order. "oo" = infinite.
 LOOP_MODES = ["oo", "0", "1", "2", "3", "4"]
 DEFAULT_LOOP_INDEX = 3          # start at "2"
+
+# Play modes cycled by Select. What happens when a track/album finishes:
+#   SINGLE  - stop after the current track
+#   ALBUM   - play the rest of this album/folder, then stop
+#   ALL     - at album end, roll into the next folder and keep going
+#   SHUFFLE - at album end, jump to a random folder
+PLAY_MODES = ["SINGLE", "ALBUM", "ALL", "SHUFFLE"]
+PLAY_LABELS = {"SINGLE": "Single", "ALBUM": "Album", "ALL": "All", "SHUFFLE": "Shuffle"}
+DEFAULT_PLAY_INDEX = 1          # "ALBUM" (previous default behavior)
 FADE_SECONDS = 4.0              # fade for finite loop modes
 
 # Each engine is one of two kinds:
@@ -329,7 +339,7 @@ class Screen:
         sy = self.h - 56
         d.line([(pad, sy - 8), (self.w - pad, sy - 8)], fill=DIM, width=1)
         loop = "Loop ∞" if st.loop_mode == "oo" else "Loop %s" % st.loop_mode
-        mode = "CONT" if st.continuous else "SINGLE"
+        mode = PLAY_LABELS[st.play_mode]
         if st.total and st.total > 0:
             tt = "%s / %s" % (fmt_time(st.cur), fmt_time(st.total))
         else:
@@ -340,7 +350,7 @@ class Screen:
         d.text((self.w - pad - tw, sy), tt, font=self.f_status, fill=FG)
 
         # --- button hints ---
-        hint = "A: loop   B: exit   Select: cont/single   L/R: prev/next"
+        hint = "A: loop   B: exit   Select: mode   L/R: prev/next"
         d.text((pad, self.h - 24), hint, font=self.f_hint, fill=DIM)
 
         self._blit(img)
@@ -388,14 +398,15 @@ def fmt_time(sec):
 # Player state
 # ----------------------------------------------------------------------------
 class State:
-    def __init__(self, tracks, idx, category, album, art):
+    def __init__(self, tracks, idx, category, album, art, source_rom=None):
         self.tracks = tracks            # display names
         self.idx = idx
         self.category = category
         self.album = album
         self.art = art
+        self.source_rom = source_rom    # the file this album was launched from
         self.loop_index = DEFAULT_LOOP_INDEX
-        self.continuous = True
+        self.play_index = DEFAULT_PLAY_INDEX
         self.cur = 0.0
         self.total = None
         self.playing = False
@@ -403,6 +414,10 @@ class State:
     @property
     def loop_mode(self):
         return LOOP_MODES[self.loop_index]
+
+    @property
+    def play_mode(self):
+        return PLAY_MODES[self.play_index]
 
 
 # ----------------------------------------------------------------------------
@@ -436,13 +451,59 @@ def joystick_thread(evq, stop_evt):
 # Jukebox engine wrapper
 # ----------------------------------------------------------------------------
 class Jukebox:
-    def __init__(self, entries, state):
+    def __init__(self, entries, state, screen=None):
         # each entry: {"engine": path, "file": path, "track": int|None, "name": str}
         self.entries = entries
         self.state = state
+        self.screen = screen            # for reloading box art on album change
         self.proc = None
         self._killed = False
         self._reader = None
+
+    def load_source(self, rom):
+        """Swap the whole queue to a different album/file and start playing it."""
+        entries, idx, category, album, art_path = describe(rom)
+        if not entries:
+            return False
+        self.stop_proc()
+        self.entries = entries
+        st = self.state
+        st.source_rom = rom
+        st.tracks = [e["name"] for e in entries]
+        st.idx = idx
+        st.category = category
+        st.album = album
+        if self.screen is not None:
+            st.art = self.screen.load_art(art_path, 220)
+        self.start_track()
+        return True
+
+    def advance_album(self, shuffle=False):
+        """Move to the next (or a random) sibling album. Returns False if there
+        is nowhere to go (end of a sequential scope)."""
+        src = self.state.source_rom
+        if not src:
+            return False
+        albums = sibling_albums(src)
+        if not albums:
+            return False
+        if album_is_file(src):
+            cur = src
+        else:
+            cur_dir = os.path.dirname(src)
+            cur = next((a for a in albums if os.path.dirname(a) == cur_dir), None)
+        try:
+            i = albums.index(cur)
+        except ValueError:
+            i = -1
+        if shuffle:
+            pool = [a for a in albums if a != cur] or albums
+            nxt = random.choice(pool)
+        else:
+            if i + 1 >= len(albums):
+                return False
+            nxt = albums[i + 1]
+        return self.load_source(nxt)
 
     def engine_args(self):
         mode = self.state.loop_mode
@@ -670,6 +731,66 @@ def build_playlist(rom_path):
     return entries, idx
 
 
+def describe(rom):
+    """Everything the UI needs for a launched file: (entries, start_idx,
+    category, album, art_path). Containers/one-file albums sit directly under
+    their category and *are* the album; folder-albums use their folder."""
+    entries, idx = build_playlist(rom)
+    if os.path.splitext(rom)[1].lower() in CONTAINER_EXTS:
+        album = strip_paren_suffix(os.path.splitext(os.path.basename(rom))[0])
+        category = os.path.basename(os.path.dirname(rom))
+    else:
+        album_dir = os.path.dirname(rom)
+        album = strip_paren_suffix(os.path.basename(album_dir))
+        category = os.path.basename(os.path.dirname(album_dir))
+    return entries, idx, category, album, find_box_art(rom)
+
+
+def album_is_file(rom):
+    """True if the album is a single file (subtune or container) rather than a
+    folder of tracks - decides how we find sibling albums."""
+    ext = os.path.splitext(rom)[1].lower()
+    if ext in CONTAINER_EXTS:
+        return True
+    spec = EXT_ENGINE.get(ext)
+    return bool(spec and spec[1] == "subtune")
+
+
+def first_playable(dirpath):
+    """A representative playable file inside dirpath (recursively), or None."""
+    for root, _dirs, files in os.walk(dirpath):
+        for f in sorted(files, key=natural_key):
+            ext = os.path.splitext(f)[1].lower()
+            if ext in AUDIO_EXTS or ext in CONTAINER_EXTS:
+                return os.path.join(root, f)
+    return None
+
+
+def sibling_albums(rom):
+    """Ordered list of album 'rom' paths in the same scope as `rom`: sibling
+    files for one-file albums, sibling folders (a representative file each) for
+    folder-albums."""
+    if album_is_file(rom):
+        d = os.path.dirname(rom)
+        ext = os.path.splitext(rom)[1].lower()
+        out = []
+        for f in sorted(os.listdir(d), key=natural_key):
+            p = os.path.join(d, f)
+            if os.path.isfile(p) and os.path.splitext(f)[1].lower() == ext:
+                out.append(p)
+        return out
+    album_dir = os.path.dirname(rom)
+    parent = os.path.dirname(album_dir)
+    out = []
+    for sub in sorted(os.listdir(parent), key=natural_key):
+        subp = os.path.join(parent, sub)
+        if os.path.isdir(subp):
+            rep = first_playable(subp)
+            if rep:
+                out.append(rep)
+    return out
+
+
 def load_button_map():
     try:
         with open(BTN_MAP_FILE) as fh:
@@ -705,7 +826,7 @@ def calibrate(screen):
     prompts = [
         ("A", "cycles loop mode  oo/0/1/2/3/4"),
         ("B", "exits to the menu"),
-        ("SELECT", "toggles continuous / single"),
+        ("SELECT", "cycles play mode  Single/Album/All/Shuffle"),
         ("L", "previous track  (left shoulder)"),
         ("R", "next track  (right shoulder)"),
     ]
@@ -753,16 +874,7 @@ def main():
         print("usage: jukebox.py <track>")
         return 1
     rom = sys.argv[1]
-    if os.path.splitext(rom)[1].lower() in CONTAINER_EXTS:
-        # a container (.rsn) sits directly under its category and *is* the album
-        album = strip_paren_suffix(os.path.splitext(os.path.basename(rom))[0])
-        category = os.path.basename(os.path.dirname(rom))
-    else:
-        album_dir = os.path.dirname(rom)
-        album = strip_paren_suffix(os.path.basename(album_dir))
-        category = os.path.basename(os.path.dirname(album_dir))
-
-    entries, idx = build_playlist(rom)
+    entries, idx, category, album, art_path = describe(rom)
     if not entries:
         return 1
     names = [e["name"] for e in entries]
@@ -777,9 +889,9 @@ def main():
     if bmap is None:
         bmap = calibrate(screen)
 
-    art = screen.load_art(find_box_art(rom), 220)
-    state = State(names, idx, category, album, art)
-    jb = Jukebox(entries, state)
+    art = screen.load_art(art_path, 220)
+    state = State(names, idx, category, album, art, source_rom=rom)
+    jb = Jukebox(entries, state, screen=screen)
 
     evq = queue.Queue()
     stop_evt = threading.Event()
@@ -803,7 +915,7 @@ def main():
                 elif btn == bmap["A"]:
                     jb.cycle_loop()
                 elif btn == bmap["SELECT"]:
-                    state.continuous = not state.continuous
+                    state.play_index = (state.play_index + 1) % len(PLAY_MODES)
                 elif btn == bmap["L"]:
                     jb.prev_track()
                 elif btn == bmap["R"]:
@@ -814,11 +926,19 @@ def main():
             # track finished on its own?
             if jb.track_ended_naturally():
                 state.playing = False
-                if state.continuous:
-                    if not jb.next_track(wrap_exits=True):
-                        running = False  # reached end of album
-                else:
-                    running = False       # single-song mode
+                mode = state.play_mode
+                if mode == "SINGLE":
+                    running = False
+                elif jb.next_track(wrap_exits=True):
+                    pass                      # advanced within this album
+                elif mode == "ALL":
+                    if not jb.advance_album(shuffle=False):
+                        running = False       # end of the sequential scope
+                elif mode == "SHUFFLE":
+                    if not jb.advance_album(shuffle=True):
+                        running = False
+                else:                         # ALBUM: stop at album end
+                    running = False
                 screen.render(state)
                 last_draw = time.time()
 

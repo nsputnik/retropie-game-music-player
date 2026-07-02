@@ -106,6 +106,22 @@ engines. So the top-level category IS the synth:
   MT-32 DOS corpus. Category-routed: `gme/MT-32/…` → mt32juke, `gme/DOS|GM/…` → gmjuke.
 - `stjuke` — sc68 (source build, gated/fail-soft) for Atari ST `.sndh`/`.ym`.
 
+## Play modes (Select cycles) & album navigation
+`State.play_index` over `PLAY_MODES = [SINGLE, ALBUM, ALL, SHUFFLE]` (default ALBUM).
+On natural track end: SINGLE stops; otherwise `next_track` advances within the
+album; at album end, ALL calls `advance_album()` (next sibling), SHUFFLE calls it
+with a random pick, ALBUM stops. `describe(rom)` builds (entries, idx, category,
+album, art) for any launched file; `Jukebox.load_source(rom)` swaps the whole
+queue+state and restarts; `sibling_albums(rom)` lists albums in scope — sibling
+*folders* for folder-albums, sibling *files* for one-file albums (`album_is_file()`
+= subtune/container). `State.source_rom` tracks the current album for sequencing.
+
+## Art (fetch-art.py)
+Drops `folder.png` per album from libretro-thumbnails (keyless). Handles flat
+categories (`REPOS`) and nested ones (`NESTED`, e.g. `AdLib/Games` tried against
+DOS → MAME → FBNeo). `--category X` restricts the run. Loose name matching is
+length-guarded (>=5) to avoid junk like "Z" matching "Zoop". AdLib hit ~203/245.
+
 ## Gotchas
 - Content-prep scripts run on macOS: `/bin/bash` is 3.2 (no `mapfile`/assoc arrays);
   the shell is **zsh** (unmatched globs error out) — prefer `find`, run scripts with `bash`.

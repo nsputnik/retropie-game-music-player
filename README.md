@@ -51,7 +51,7 @@ use. This project gives you a real jukebox:
 |---|---|
 | **A** | Cycle loop mode: ∞ → 0 → 1 → 2 → 3 → 4 (live, no restart) |
 | **B** | Exit to the menu |
-| **Select** | Toggle Continuous (auto-next) vs Single (stop after track) |
+| **Select** | Cycle play mode: **Single** → **Album** → **All** (roll into next folder) → **Shuffle** (jump to a random folder) |
 | **L / R shoulders** | Previous / next track |
 
 On first launch an **on-screen setup wizard** captures your controller's button
