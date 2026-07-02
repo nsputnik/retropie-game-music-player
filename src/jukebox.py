@@ -22,6 +22,8 @@ import time
 import select
 import signal
 import struct
+import shutil
+import tempfile
 import threading
 import subprocess
 import queue
@@ -66,16 +68,23 @@ FADE_SECONDS = 4.0              # fade for finite loop modes
 #   "subtune" - one file holds many subtunes, queried via --info/--track and
 #               shown as numbered tracks (NSF/GBS/..., SID).
 VGM_EXTS = (".vgz", ".vgm", ".gym", ".s98", ".dro")
-GME_EXTS = (".nsf", ".nsfe", ".gbs", ".spc", ".ay", ".hes", ".kss", ".sap")
+GME_EXTS = (".nsf", ".nsfe", ".gbs", ".ay", ".hes", ".kss", ".sap")  # multi-subtune
+SPC_EXTS = (".spc",)          # SNES; gmejuke, but one song per file -> sibling
 MOD_EXTS = (".mod", ".xm", ".s3m", ".it", ".mtm", ".mptm", ".med", ".stm",
             ".okt", ".ptm", ".dbm", ".digi", ".ahx", ".hvl", ".mo3", ".umx")
 SID_EXTS = (".sid", ".psid")
 MIDI_EXTS = (".mid", ".midi", ".rmi")
 
+# Container formats: not decoded directly - unpacked to sibling tracks first.
+# .rsn = a RAR archive of .spc files (one SNES game's soundtrack).
+RSN_EXTS = (".rsn",)
+CONTAINER_EXTS = RSN_EXTS
+
 # (engine binary, its extensions, kind). Order = match priority.
 _ENGINE_SPECS = [
     (ENGINE_VGM, VGM_EXTS, "sibling"),
     (ENGINE_GME, GME_EXTS, "subtune"),
+    (ENGINE_GME, SPC_EXTS, "sibling"),
     (ENGINE_MOD, MOD_EXTS, "sibling"),
     (ENGINE_SID, SID_EXTS, "subtune"),
     (ENGINE_GM, MIDI_EXTS, "sibling"),
@@ -564,12 +573,53 @@ def subtunes(engine, rom_path):
              "name": names.get(i, "Track %d" % i)} for i in range(1, count + 1)]
 
 
+def rsn_playlist(rom_path):
+    """Unpack a .rsn (a RAR archive of .spc files, one SNES game's soundtrack)
+    to a temp dir and return gmejuke sibling entries for its SPCs, or None."""
+    if not os.path.exists(ENGINE_GME):
+        return None
+    dest = os.path.join(tempfile.gettempdir(), "rsnplay")
+    shutil.rmtree(dest, ignore_errors=True)
+    os.makedirs(dest, exist_ok=True)
+    # extractor preference: unar (best RAR support), then libarchive/7z/unrar
+    attempts = [
+        ["unar", "-quiet", "-force-overwrite", "-no-directory", "-output-directory", dest, rom_path],
+        ["bsdtar", "-xf", rom_path, "-C", dest],
+        ["7z", "x", "-y", "-o" + dest, rom_path],
+        ["unrar", "x", "-y", "-inul", rom_path, dest + "/"],
+    ]
+    for cmd in attempts:
+        if not shutil.which(cmd[0]):
+            continue
+        try:
+            subprocess.check_call(cmd, stdout=subprocess.DEVNULL,
+                                  stderr=subprocess.DEVNULL)
+            break
+        except Exception:
+            continue
+    # collect .spc (some tools nest into a subfolder)
+    spcs = []
+    for root, _dirs, files in os.walk(dest):
+        for f in files:
+            if f.lower().endswith(".spc"):
+                spcs.append(os.path.join(root, f))
+    if not spcs:
+        return None
+    spcs.sort(key=natural_key)
+    return [{"engine": ENGINE_GME, "file": p, "track": None,
+             "name": os.path.splitext(os.path.basename(p))[0]} for p in spcs]
+
+
 def build_playlist(rom_path):
-    """Return (entries, start_index). Sibling-file engines (VGM/MOD/MIDI) queue
-    every file in the album folder; subtune engines (NSF/SID/...) queue the
-    file's subtunes. The engine is chosen from the file extension, and only
-    engines whose binary is present are routable (see EXT_ENGINE)."""
+    """Return (entries, start_index). Container formats (.rsn) unpack to sibling
+    tracks; sibling-file engines (VGM/MOD/MIDI/SPC) queue every file in the album
+    folder; subtune engines (NSF/SID/...) queue the file's subtunes."""
     ext = os.path.splitext(rom_path)[1].lower()
+
+    if ext in CONTAINER_EXTS:
+        entries = rsn_playlist(rom_path)
+        return (entries, 0) if entries else ([], 0)
+
     spec = EXT_ENGINE.get(ext)
     if spec is None:
         return [], 0
@@ -584,9 +634,10 @@ def build_playlist(rom_path):
         return [{"engine": engine, "file": rom_path,
                  "track": 1, "name": name}], 0
 
-    # sibling: queue every file in the album folder handled by this same engine
+    # sibling: queue every file in the album folder with the same engine + kind
     album_dir = os.path.dirname(rom_path)
-    sib_exts = tuple(e for e, (eng, _k) in EXT_ENGINE.items() if eng == engine)
+    sib_exts = tuple(e for e, (eng, k) in EXT_ENGINE.items()
+                     if eng == engine and k == kind)
     files = [f for f in os.listdir(album_dir) if f.lower().endswith(sib_exts)]
     files.sort(key=natural_key)
     entries = [{"engine": engine, "file": os.path.join(album_dir, f),
@@ -679,9 +730,14 @@ def main():
         print("usage: jukebox.py <track>")
         return 1
     rom = sys.argv[1]
-    album_dir = os.path.dirname(rom)
-    album = strip_paren_suffix(os.path.basename(album_dir))
-    category = os.path.basename(os.path.dirname(album_dir))
+    if os.path.splitext(rom)[1].lower() in CONTAINER_EXTS:
+        # a container (.rsn) sits directly under its category and *is* the album
+        album = strip_paren_suffix(os.path.splitext(os.path.basename(rom))[0])
+        category = os.path.basename(os.path.dirname(rom))
+    else:
+        album_dir = os.path.dirname(rom)
+        album = strip_paren_suffix(os.path.basename(album_dir))
+        category = os.path.basename(os.path.dirname(album_dir))
 
     entries, idx = build_playlist(rom)
     if not entries:

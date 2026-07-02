@@ -45,6 +45,17 @@ missing/failed engine silently drops its formats instead of crashing.
   `<binary-dir>/soundfonts/`. If a `.mid` has an identically-named `.sf2` beside
   it, it's loaded into bank 1 (AWE32 MIDI+SF2 pairs).
 
+### SNES: SPC (sibling) + RSN containers
+SNES music is `.spc` (decoded by `gmejuke`) but one song per file — so SPC is a
+**sibling** kind (album = folder of `.spc`), not subtune. SNES sets are almost
+always distributed as **`.rsn`** (a RAR of `.spc` + `info.txt`). `.rsn` is a
+**container**: `jukebox.py` unpacks it (via `unar`; falls back to bsdtar/7z/unrar)
+to `/tmp/rsnplay` on launch and plays the SPCs as a sibling album. A `.rsn` sits
+directly under its category and *is* the album (main() special-cases album/category
+for containers). `install.sh` installs `unar` (fail-soft). TODO: prettier names
+come from the `.rsn` filename — rename files to full titles or parse `info.txt`;
+box art for containers isn't wired (find_box_art still assumes Category/Album/track).
+
 ## Deployment reality (IMPORTANT — differs from install.sh defaults)
 `install.sh` defaults `INSTALL_DIR=/opt/retropie/emulators/gamemusic`, **but the
 live GPi Case Pi was installed under the older name**:

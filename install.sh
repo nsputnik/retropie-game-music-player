@@ -78,6 +78,11 @@ echo "==> Installing extra engine deps (sudo apt; non-fatal)"
 sudo apt-get install -y libopenmpt-dev libsidplayfp-dev libfluidsynth-dev \
     pkg-config || echo "!! some extra engine dev packages unavailable; those engines will be skipped"
 
+# .rsn (SNES SPC sets) are RAR archives; the jukebox unpacks them to .spc at
+# play time via 'unar'. Optional: without it, .rsn won't open (raw .spc still works).
+echo "==> Installing unar for .rsn (SNES) support (sudo apt; non-fatal)"
+sudo apt-get install -y unar || echo "!! unar unavailable - .rsn files won't unpack; use extracted .spc instead"
+
 build_extra_engine() {  # name  source.cpp  pkgconfig-name
     local name="$1" src="$2" pkg="$3" flags
     flags="$(pkg-config --cflags --libs "$pkg" 2>/dev/null)" || flags=""
