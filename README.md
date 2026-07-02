@@ -155,6 +155,12 @@ Library tidy-up:
   (`smw.rsn`) to the real game title read from each archive's own `info.txt`
   (`Super Mario World (SNES).rsn`). Dry-run by default; `--apply` to rename. The
   `.rsn` files aren't unpacked or modified.
+  `install.sh` also wires this into a **boot hook** (in `autostart.sh`) that runs
+  it over `roms/gme/SNES` before EmulationStation loads — so newly-dropped
+  abbreviated packs get titled automatically. It's idempotent and near-instant
+  (already-titled files ending in `(SNES)` are skipped without being opened, so
+  only new short-named packs are ever touched). To turn it off, delete the line
+  marked `# gme: SNES .rsn auto-rename` from `autostart.sh`.
 
 ## How it works
 

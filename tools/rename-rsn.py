@@ -78,15 +78,27 @@ def main():
                     help="actually rename (default: dry-run preview)")
     ap.add_argument("--suffix", default="(SNES)",
                     help='appended before .rsn (default "(SNES)"; "" for none)')
+    ap.add_argument("--quiet", action="store_true",
+                    help="print nothing (for an unattended/boot run)")
     args = ap.parse_args()
+
+    def say(*a):
+        if not args.quiet:
+            print(*a)
 
     rsns = sorted(f for f in os.listdir(args.dir) if f.lower().endswith(".rsn"))
     renamed = unchanged = missed = 0
     for fn in rsns:
         src = os.path.join(args.dir, fn)
+        # fast path: a file already carrying the suffix is assumed done -- skip
+        # it WITHOUT opening the archive, so repeat runs are near-instant and only
+        # newly-added, still-abbreviated packs are ever read/renamed.
+        if args.suffix and fn.endswith(" %s.rsn" % args.suffix):
+            unchanged += 1
+            continue
         title = read_info_title(src)
         if not title:
-            print("SKIP (no info.txt title): %s" % fn)
+            say("SKIP (no info.txt title): %s" % fn)
             missed += 1
             continue
         clean = sanitize(title)
@@ -101,15 +113,15 @@ def main():
                 else "%s [%s].rsn" % (clean, base)
         if args.apply:
             os.rename(src, os.path.join(args.dir, new))
-            print("renamed: %s  ->  %s" % (fn, new))
+            say("renamed: %s  ->  %s" % (fn, new))
             renamed += 1
         else:
-            print("%-18s ->  %s" % (fn, new))
+            say("%-18s ->  %s" % (fn, new))
 
     if args.apply:
-        print("\nrenamed %d, unchanged %d, missed %d" % (renamed, unchanged, missed))
+        say("\nrenamed %d, unchanged %d, missed %d" % (renamed, unchanged, missed))
     else:
-        print("\n(dry-run) re-run with --apply to rename")
+        say("\n(dry-run) re-run with --apply to rename")
 
 
 if __name__ == "__main__":

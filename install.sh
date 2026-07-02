@@ -112,6 +112,7 @@ fi
 echo "==> Installing player files into $INSTALL_DIR"
 cp "$HERE/src/jukebox.py" "$INSTALL_DIR/jukebox.py"
 cp "$HERE/src/launch.sh" "$INSTALL_DIR/launch.sh"
+cp "$HERE/tools/rename-rsn.py" "$INSTALL_DIR/rename-rsn.py"   # for the boot auto-rename
 chmod +x "$INSTALL_DIR/launch.sh" "$INSTALL_DIR/vgmjuke" "$INSTALL_DIR/gmejuke"
 
 # --- 6. EmulationStation 'gme' system -----------------------------------------
@@ -142,6 +143,40 @@ print("  inserted gme system")
 PY
 else
     echo "    gme system already present, leaving es_systems.cfg alone"
+fi
+
+# --- 7. auto-rename hook for SNES .rsn packs ---------------------------------
+# SNESmusic .rsn packs are named with abbreviations (smw.rsn). This adds a line
+# to autostart.sh that, at each boot BEFORE EmulationStation loads, renames any
+# still-abbreviated pack to the title from its info.txt. It is idempotent and
+# near-instant: already-titled files (ending in "(SNES)") are skipped without
+# being opened, so it only ever touches newly-added, short-named packs.
+# To disable: delete the marked line from autostart.sh.
+AUTOSTART="${AUTOSTART:-/opt/retropie/configs/all/autostart.sh}"
+MARK="# gme: SNES .rsn auto-rename"
+HOOKLINE="command -v unar >/dev/null 2>&1 && [ -d \"$GME_ROMS/SNES\" ] && python3 \"$INSTALL_DIR/rename-rsn.py\" --apply --quiet \"$GME_ROMS/SNES\"  $MARK"
+echo "==> Installing SNES .rsn auto-rename hook"
+if [ -f "$AUTOSTART" ] && grep -q "$MARK" "$AUTOSTART"; then
+    echo "    hook already present in $AUTOSTART"
+elif [ -f "$AUTOSTART" ] && grep -q "emulationstation" "$AUTOSTART"; then
+    # insert just before the first emulationstation launch line
+    sudo python3 - "$AUTOSTART" "$HOOKLINE" <<'PY'
+import sys
+path, hook = sys.argv[1], sys.argv[2]
+lines = open(path).read().splitlines()
+out, done = [], False
+for l in lines:
+    if not done and "emulationstation" in l:
+        out.append(hook); done = True
+    out.append(l)
+if not done:
+    out.append(hook)
+open(path, "w").write("\n".join(out) + "\n")
+print("  hook inserted into", path)
+PY
+else
+    echo "    !! no autostart.sh with an emulationstation line found; skipping hook."
+    echo "       (run rename-rsn.py by hand, or add the hook manually.)"
 fi
 
 echo
