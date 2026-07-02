@@ -22,6 +22,9 @@ import time
 import select
 import signal
 import struct
+import random
+import shutil
+import tempfile
 import threading
 import subprocess
 import queue
@@ -34,6 +37,9 @@ import queue
 HERE = os.path.dirname(os.path.abspath(__file__))
 ENGINE_VGM = os.path.join(HERE, "vgmjuke")   # libvgm: VGM/VGZ/...
 ENGINE_GME = os.path.join(HERE, "gmejuke")   # libgme: NSF/GBS/...
+ENGINE_MOD = os.path.join(HERE, "modjuke")   # libopenmpt: MOD/XM/S3M/IT/...
+ENGINE_SID = os.path.join(HERE, "sidjuke")   # libsidplayfp: SID/PSID
+ENGINE_GM = os.path.join(HERE, "gmjuke")     # FluidSynth: MID/MIDI (GM)
 BTN_MAP_FILE = os.path.join(HERE, "buttons.json")
 JS_DEV = "/dev/input/js0"
 FB_DEV = "/dev/fb0"
@@ -55,13 +61,60 @@ DEFAULT_BMAP = {"A": 0, "B": 1, "SELECT": 6, "L": 4, "R": 5}
 # Loop modes shown in the UI, in cycle order. "oo" = infinite.
 LOOP_MODES = ["oo", "0", "1", "2", "3", "4"]
 DEFAULT_LOOP_INDEX = 3          # start at "2"
+
+# Play modes cycled by Select. What happens when a track/album finishes:
+#   SINGLE  - stop after the current track
+#   ALBUM   - play the rest of this album/folder, then stop
+#   ALL     - at album end, roll into the next folder and keep going
+#   SHUFFLE - at album end, jump to a random folder
+PLAY_MODES = ["SINGLE", "ALBUM", "ALL", "SHUFFLE"]
+PLAY_LABELS = {"SINGLE": "Single", "ALBUM": "Album", "ALL": "All", "SHUFFLE": "Shuffle"}
+DEFAULT_PLAY_INDEX = 1          # "ALBUM" (previous default behavior)
 FADE_SECONDS = 4.0              # fade for finite loop modes
 
-# Register-log formats -> libvgm (vgmjuke), one song per file.
-# CPU-emulated formats -> libgme (gmejuke), many subtunes per file.
+# Each engine is one of two kinds:
+#   "sibling" - one song per file; the album folder's files are the queue and
+#               filenames are the track names (VGM/VGZ, MOD, MIDI).
+#   "subtune" - one file holds many subtunes, queried via --info/--track and
+#               shown as numbered tracks (NSF/GBS/..., SID).
 VGM_EXTS = (".vgz", ".vgm", ".gym", ".s98", ".dro")
-GME_EXTS = (".nsf", ".nsfe", ".gbs", ".spc", ".ay", ".hes", ".kss", ".sap")
-AUDIO_EXTS = VGM_EXTS + GME_EXTS
+GME_EXTS = (".nsf", ".nsfe", ".gbs", ".ay", ".hes", ".kss", ".sap")  # multi-subtune
+SPC_EXTS = (".spc",)          # SNES; gmejuke, but one song per file -> sibling
+MOD_EXTS = (".mod", ".xm", ".s3m", ".it", ".mtm", ".mptm", ".med", ".stm",
+            ".okt", ".ptm", ".dbm", ".digi", ".ahx", ".hvl", ".mo3", ".umx")
+SID_EXTS = (".sid", ".psid")
+MIDI_EXTS = (".mid", ".midi", ".rmi")
+
+# Container formats: not decoded directly - unpacked to sibling tracks first.
+# .rsn = a RAR archive of .spc files (one SNES game's soundtrack).
+RSN_EXTS = (".rsn",)
+CONTAINER_EXTS = RSN_EXTS
+
+# (engine binary, its extensions, kind). Order = match priority.
+_ENGINE_SPECS = [
+    (ENGINE_VGM, VGM_EXTS, "sibling"),
+    (ENGINE_GME, GME_EXTS, "subtune"),
+    (ENGINE_GME, SPC_EXTS, "sibling"),
+    (ENGINE_MOD, MOD_EXTS, "sibling"),
+    (ENGINE_SID, SID_EXTS, "subtune"),
+    (ENGINE_GM, MIDI_EXTS, "sibling"),
+]
+
+
+def _build_ext_map():
+    """ext -> (engine, kind), including only engines whose binary is present.
+    Fail-soft: an engine that didn't build just drops its formats."""
+    m = {}
+    for engine, exts, kind in _ENGINE_SPECS:
+        if not os.path.exists(engine):
+            continue
+        for e in exts:
+            m.setdefault(e, (engine, kind))
+    return m
+
+
+EXT_ENGINE = _build_ext_map()
+AUDIO_EXTS = tuple(EXT_ENGINE.keys())
 
 # Box art is reused from the matching console ROM system's images/ folder.
 # gme category folder name -> RetroPie system name (roms/<system>/images).
@@ -286,7 +339,7 @@ class Screen:
         sy = self.h - 56
         d.line([(pad, sy - 8), (self.w - pad, sy - 8)], fill=DIM, width=1)
         loop = "Loop ∞" if st.loop_mode == "oo" else "Loop %s" % st.loop_mode
-        mode = "CONT" if st.continuous else "SINGLE"
+        mode = PLAY_LABELS[st.play_mode]
         if st.total and st.total > 0:
             tt = "%s / %s" % (fmt_time(st.cur), fmt_time(st.total))
         else:
@@ -297,7 +350,7 @@ class Screen:
         d.text((self.w - pad - tw, sy), tt, font=self.f_status, fill=FG)
 
         # --- button hints ---
-        hint = "A: loop   B: exit   Select: cont/single   L/R: prev/next"
+        hint = "A: loop   B: exit   Select: mode   L/R: prev/next"
         d.text((pad, self.h - 24), hint, font=self.f_hint, fill=DIM)
 
         self._blit(img)
@@ -345,14 +398,15 @@ def fmt_time(sec):
 # Player state
 # ----------------------------------------------------------------------------
 class State:
-    def __init__(self, tracks, idx, category, album, art):
+    def __init__(self, tracks, idx, category, album, art, source_rom=None):
         self.tracks = tracks            # display names
         self.idx = idx
         self.category = category
         self.album = album
         self.art = art
+        self.source_rom = source_rom    # the file this album was launched from
         self.loop_index = DEFAULT_LOOP_INDEX
-        self.continuous = True
+        self.play_index = DEFAULT_PLAY_INDEX
         self.cur = 0.0
         self.total = None
         self.playing = False
@@ -360,6 +414,10 @@ class State:
     @property
     def loop_mode(self):
         return LOOP_MODES[self.loop_index]
+
+    @property
+    def play_mode(self):
+        return PLAY_MODES[self.play_index]
 
 
 # ----------------------------------------------------------------------------
@@ -393,13 +451,59 @@ def joystick_thread(evq, stop_evt):
 # Jukebox engine wrapper
 # ----------------------------------------------------------------------------
 class Jukebox:
-    def __init__(self, entries, state):
+    def __init__(self, entries, state, screen=None):
         # each entry: {"engine": path, "file": path, "track": int|None, "name": str}
         self.entries = entries
         self.state = state
+        self.screen = screen            # for reloading box art on album change
         self.proc = None
         self._killed = False
         self._reader = None
+
+    def load_source(self, rom):
+        """Swap the whole queue to a different album/file and start playing it."""
+        entries, idx, category, album, art_path = describe(rom)
+        if not entries:
+            return False
+        self.stop_proc()
+        self.entries = entries
+        st = self.state
+        st.source_rom = rom
+        st.tracks = [e["name"] for e in entries]
+        st.idx = idx
+        st.category = category
+        st.album = album
+        if self.screen is not None:
+            st.art = self.screen.load_art(art_path, 220)
+        self.start_track()
+        return True
+
+    def advance_album(self, shuffle=False):
+        """Move to the next (or a random) sibling album. Returns False if there
+        is nowhere to go (end of a sequential scope)."""
+        src = self.state.source_rom
+        if not src:
+            return False
+        albums = sibling_albums(src)
+        if not albums:
+            return False
+        if album_is_file(src):
+            cur = src
+        else:
+            cur_dir = os.path.dirname(src)
+            cur = next((a for a in albums if os.path.dirname(a) == cur_dir), None)
+        try:
+            i = albums.index(cur)
+        except ValueError:
+            i = -1
+        if shuffle:
+            pool = [a for a in albums if a != cur] or albums
+            nxt = random.choice(pool)
+        else:
+            if i + 1 >= len(albums):
+                return False
+            nxt = albums[i + 1]
+        return self.load_source(nxt)
 
     def engine_args(self):
         mode = self.state.loop_mode
@@ -498,11 +602,12 @@ class Jukebox:
 # ----------------------------------------------------------------------------
 # Main
 # ----------------------------------------------------------------------------
-def gme_subtunes(rom_path):
-    """Query gmejuke for an NSF/GBS/... file's subtunes. Returns entries or None."""
+def subtunes(engine, rom_path):
+    """Query an engine (--info) for a multi-subtune file (NSF/GBS/SID/...).
+    Returns entries or None."""
     try:
         out = subprocess.check_output(
-            [ENGINE_GME, "--info", rom_path],
+            [engine, "--info", rom_path],
             universal_newlines=True, stderr=subprocess.DEVNULL)
     except Exception:
         return None
@@ -525,31 +630,165 @@ def gme_subtunes(rom_path):
                 names[i] = nm
     if count <= 0:
         return None
-    return [{"engine": ENGINE_GME, "file": rom_path, "track": i,
+    return [{"engine": engine, "file": rom_path, "track": i,
              "name": names.get(i, "Track %d" % i)} for i in range(1, count + 1)]
 
 
+def spc_song_title(path):
+    """Song title from an .spc file's ID666 tag (text form, offset 0x2E, 32
+    bytes). Returns '' if absent - caller falls back to the filename."""
+    try:
+        with open(path, "rb") as f:
+            f.seek(0x2E)
+            raw = f.read(32)
+    except Exception:
+        return ""
+    t = raw.split(b"\x00")[0].decode("latin-1", "ignore")
+    return "".join(c for c in t if c.isprintable()).strip()
+
+
+def track_name(path):
+    """Display name for a sibling track: SPC song title if tagged, else filename."""
+    if path.lower().endswith(".spc"):
+        title = spc_song_title(path)
+        if title:
+            return title
+    return os.path.splitext(os.path.basename(path))[0]
+
+
+def rsn_playlist(rom_path):
+    """Unpack a .rsn (a RAR archive of .spc files, one SNES game's soundtrack)
+    to a temp dir and return gmejuke sibling entries for its SPCs, or None."""
+    if not os.path.exists(ENGINE_GME):
+        return None
+    dest = os.path.join(tempfile.gettempdir(), "rsnplay")
+    shutil.rmtree(dest, ignore_errors=True)
+    os.makedirs(dest, exist_ok=True)
+    # extractor preference: unar (best RAR support), then libarchive/7z/unrar
+    attempts = [
+        ["unar", "-quiet", "-force-overwrite", "-no-directory", "-output-directory", dest, rom_path],
+        ["bsdtar", "-xf", rom_path, "-C", dest],
+        ["7z", "x", "-y", "-o" + dest, rom_path],
+        ["unrar", "x", "-y", "-inul", rom_path, dest + "/"],
+    ]
+    for cmd in attempts:
+        if not shutil.which(cmd[0]):
+            continue
+        try:
+            subprocess.check_call(cmd, stdout=subprocess.DEVNULL,
+                                  stderr=subprocess.DEVNULL)
+            break
+        except Exception:
+            continue
+    # collect .spc (some tools nest into a subfolder)
+    spcs = []
+    for root, _dirs, files in os.walk(dest):
+        for f in files:
+            if f.lower().endswith(".spc"):
+                spcs.append(os.path.join(root, f))
+    if not spcs:
+        return None
+    spcs.sort(key=natural_key)
+    return [{"engine": ENGINE_GME, "file": p, "track": None,
+             "name": track_name(p)} for p in spcs]
+
+
 def build_playlist(rom_path):
-    """Return (entries, start_index). VGM albums = sibling files; NSF/GBS/...
-    albums = the file's subtunes."""
+    """Return (entries, start_index). Container formats (.rsn) unpack to sibling
+    tracks; sibling-file engines (VGM/MOD/MIDI/SPC) queue every file in the album
+    folder; subtune engines (NSF/SID/...) queue the file's subtunes."""
     ext = os.path.splitext(rom_path)[1].lower()
-    if ext in GME_EXTS:
-        entries = gme_subtunes(rom_path)
+
+    if ext in CONTAINER_EXTS:
+        entries = rsn_playlist(rom_path)
+        return (entries, 0) if entries else ([], 0)
+
+    spec = EXT_ENGINE.get(ext)
+    if spec is None:
+        return [], 0
+    engine, kind = spec
+
+    if kind == "subtune":
+        entries = subtunes(engine, rom_path)
         if entries:
             return entries, 0
         # fallback: play the file as a single track
         name = os.path.splitext(os.path.basename(rom_path))[0]
-        return [{"engine": ENGINE_GME, "file": rom_path,
+        return [{"engine": engine, "file": rom_path,
                  "track": 1, "name": name}], 0
 
+    # sibling: queue every file in the album folder with the same engine + kind
     album_dir = os.path.dirname(rom_path)
-    files = [f for f in os.listdir(album_dir) if f.lower().endswith(VGM_EXTS)]
+    sib_exts = tuple(e for e, (eng, k) in EXT_ENGINE.items()
+                     if eng == engine and k == kind)
+    files = [f for f in os.listdir(album_dir) if f.lower().endswith(sib_exts)]
     files.sort(key=natural_key)
-    entries = [{"engine": ENGINE_VGM, "file": os.path.join(album_dir, f),
-                "track": None, "name": os.path.splitext(f)[0]} for f in files]
+    entries = [{"engine": engine, "file": os.path.join(album_dir, f),
+                "track": None, "name": track_name(os.path.join(album_dir, f))}
+               for f in files]
     sel = os.path.basename(rom_path)
     idx = next((k for k, f in enumerate(files) if f == sel), 0)
     return entries, idx
+
+
+def describe(rom):
+    """Everything the UI needs for a launched file: (entries, start_idx,
+    category, album, art_path). Containers/one-file albums sit directly under
+    their category and *are* the album; folder-albums use their folder."""
+    entries, idx = build_playlist(rom)
+    if os.path.splitext(rom)[1].lower() in CONTAINER_EXTS:
+        album = strip_paren_suffix(os.path.splitext(os.path.basename(rom))[0])
+        category = os.path.basename(os.path.dirname(rom))
+    else:
+        album_dir = os.path.dirname(rom)
+        album = strip_paren_suffix(os.path.basename(album_dir))
+        category = os.path.basename(os.path.dirname(album_dir))
+    return entries, idx, category, album, find_box_art(rom)
+
+
+def album_is_file(rom):
+    """True if the album is a single file (subtune or container) rather than a
+    folder of tracks - decides how we find sibling albums."""
+    ext = os.path.splitext(rom)[1].lower()
+    if ext in CONTAINER_EXTS:
+        return True
+    spec = EXT_ENGINE.get(ext)
+    return bool(spec and spec[1] == "subtune")
+
+
+def first_playable(dirpath):
+    """A representative playable file inside dirpath (recursively), or None."""
+    for root, _dirs, files in os.walk(dirpath):
+        for f in sorted(files, key=natural_key):
+            ext = os.path.splitext(f)[1].lower()
+            if ext in AUDIO_EXTS or ext in CONTAINER_EXTS:
+                return os.path.join(root, f)
+    return None
+
+
+def sibling_albums(rom):
+    """Ordered list of album 'rom' paths in the same scope as `rom`: sibling
+    files for one-file albums, sibling folders (a representative file each) for
+    folder-albums."""
+    if album_is_file(rom):
+        d = os.path.dirname(rom)
+        ext = os.path.splitext(rom)[1].lower()
+        out = []
+        for f in sorted(os.listdir(d), key=natural_key):
+            p = os.path.join(d, f)
+            if os.path.isfile(p) and os.path.splitext(f)[1].lower() == ext:
+                out.append(p)
+        return out
+    album_dir = os.path.dirname(rom)
+    parent = os.path.dirname(album_dir)
+    out = []
+    for sub in sorted(os.listdir(parent), key=natural_key):
+        subp = os.path.join(parent, sub)
+        if os.path.isdir(subp):
+            rep = first_playable(subp)
+            if rep:
+                out.append(rep)
+    return out
 
 
 def load_button_map():
@@ -587,7 +826,7 @@ def calibrate(screen):
     prompts = [
         ("A", "cycles loop mode  oo/0/1/2/3/4"),
         ("B", "exits to the menu"),
-        ("SELECT", "toggles continuous / single"),
+        ("SELECT", "cycles play mode  Single/Album/All/Shuffle"),
         ("L", "previous track  (left shoulder)"),
         ("R", "next track  (right shoulder)"),
     ]
@@ -635,11 +874,7 @@ def main():
         print("usage: jukebox.py <track>")
         return 1
     rom = sys.argv[1]
-    album_dir = os.path.dirname(rom)
-    album = strip_paren_suffix(os.path.basename(album_dir))
-    category = os.path.basename(os.path.dirname(album_dir))
-
-    entries, idx = build_playlist(rom)
+    entries, idx, category, album, art_path = describe(rom)
     if not entries:
         return 1
     names = [e["name"] for e in entries]
@@ -654,9 +889,9 @@ def main():
     if bmap is None:
         bmap = calibrate(screen)
 
-    art = screen.load_art(find_box_art(rom), 220)
-    state = State(names, idx, category, album, art)
-    jb = Jukebox(entries, state)
+    art = screen.load_art(art_path, 220)
+    state = State(names, idx, category, album, art, source_rom=rom)
+    jb = Jukebox(entries, state, screen=screen)
 
     evq = queue.Queue()
     stop_evt = threading.Event()
@@ -680,7 +915,7 @@ def main():
                 elif btn == bmap["A"]:
                     jb.cycle_loop()
                 elif btn == bmap["SELECT"]:
-                    state.continuous = not state.continuous
+                    state.play_index = (state.play_index + 1) % len(PLAY_MODES)
                 elif btn == bmap["L"]:
                     jb.prev_track()
                 elif btn == bmap["R"]:
@@ -691,11 +926,19 @@ def main():
             # track finished on its own?
             if jb.track_ended_naturally():
                 state.playing = False
-                if state.continuous:
-                    if not jb.next_track(wrap_exits=True):
-                        running = False  # reached end of album
-                else:
-                    running = False       # single-song mode
+                mode = state.play_mode
+                if mode == "SINGLE":
+                    running = False
+                elif jb.next_track(wrap_exits=True):
+                    pass                      # advanced within this album
+                elif mode == "ALL":
+                    if not jb.advance_album(shuffle=False):
+                        running = False       # end of the sequential scope
+                elif mode == "SHUFFLE":
+                    if not jb.advance_album(shuffle=True):
+                        running = False
+                else:                         # ALBUM: stop at album end
+                    running = False
                 screen.render(state)
                 last_draw = time.time()
 

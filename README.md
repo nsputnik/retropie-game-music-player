@@ -18,21 +18,39 @@ RetroPie has no built-in way to just *listen* to game music. Libretro's
 no loop control), and it can't synthesize the arcade/Genesis chips that VGM rips
 use. This project gives you a real jukebox:
 
-- **Two engines, picked automatically by file type:**
+- **Multiple engines, picked automatically by file type:**
   - `vgmjuke` (built on **[libvgm](https://github.com/ValleyBell/libvgm)**) plays
     register-log formats — **VGM / VGZ / GYM / S98 / DRO** — with full chip support
     (YM2151, YM2612, SN76489, RF5C68, SegaPCM, …) for arcade, Genesis and Master
     System music.
   - `gmejuke` (built on **[libgme / game-music-emu](https://github.com/libgme/game-music-emu)**)
     plays CPU-emulated formats — **NSF / NSFE / GBS / SPC / AY / HES / KSS / SAP**.
+  - `modjuke` (built on **[libopenmpt](https://lib.openmpt.org/libopenmpt/)**)
+    plays Amiga/tracker modules — **MOD / XM / S3M / IT / MED / AHX / …**.
+  - `sidjuke` (built on **[libsidplayfp](https://github.com/libsidplayfp/libsidplayfp)**)
+    plays Commodore 64 **SID / PSID** (multi-subtune, like NSF).
+  - `gmjuke` (built on **[FluidSynth](https://www.fluidsynth.org/)**) plays
+    General MIDI **MID / MIDI** using an SC-55-style GM SoundFont you supply
+    (this is the authentic playback path for AWE32/GM-era DOS & Windows game music).
+
+  The last three wrap apt-packaged libraries and are **optional / fail-soft**:
+  if a library or SoundFont is missing, that engine is skipped and its formats
+  simply don't appear — the core VGM/GME engines are unaffected.
+- **SNES `.rsn` support.** SNES sets ship as `.rsn` (a RAR of `.spc` + `info.txt`).
+  The player unpacks them on launch (via `unar`) and plays the SPCs as an album —
+  drop `.rsn` files in as-downloaded, no manual extraction.
 - **Folder = album.** Selecting a track queues every track in its folder. Track
   names come from the **filenames**, so file-per-song formats (VGZ/VGM/GYM/…) show
-  real track titles. **NSF and other multi-subtune files** store no per-track
-  names, so their subtunes show as numbered entries (*Track 1…N*).
-- **Box art** is reused from your existing console game systems' scraped art
-  (`roms/nes/images`, `roms/megadrive/images`, …) — the player only *displays*
-  existing art, it never goes online.
-- **Live loop control, continuous/single play, prev/next** — all from the pad.
+  real track titles. **SPC** files show their **ID666 song title**; **NSF and other
+  multi-subtune files** store no per-track names, so their subtunes show as numbered
+  entries (*Track 1…N*).
+- **Box art** — per-album `folder.png` (preferred), else reused from your existing
+  console systems' scraped art (`roms/nes/images`, …). `tools/fetch-art.py` can
+  fill gaps from libretro-thumbnails. The player only *displays* art, never fetches
+  at runtime.
+- **Four play modes** (cycle with Select): **Single**, **Album**, **All** (roll into
+  the next folder at album end), **Shuffle** (jump to a random folder) — plus live
+  loop control and prev/next, all from the pad.
 
 ## Controls
 
@@ -40,7 +58,7 @@ use. This project gives you a real jukebox:
 |---|---|
 | **A** | Cycle loop mode: ∞ → 0 → 1 → 2 → 3 → 4 (live, no restart) |
 | **B** | Exit to the menu |
-| **Select** | Toggle Continuous (auto-next) vs Single (stop after track) |
+| **Select** | Cycle play mode: **Single** → **Album** → **All** (roll into next folder) → **Shuffle** (jump to a random folder) |
 | **L / R shoulders** | Previous / next track |
 
 On first launch an **on-screen setup wizard** captures your controller's button
@@ -56,6 +74,14 @@ numbers (it varies by pad) and saves them next to the player.
 > **libvgm and libgme are prerequisites**, but you do **not** install them by
 > hand and they are **not** bundled here — `install.sh` clones and compiles them
 > locally (they have their own licenses).
+
+The optional MOD/SID/MIDI engines use apt-packaged libraries that `install.sh`
+adds automatically (`libopenmpt-dev libsidplayfp-dev libfluidsynth-dev`); if any
+are unavailable the build skips just that engine. **MIDI needs a General MIDI
+SoundFont** — drop an SC-55-style `.sf2` in
+`/opt/retropie/emulators/gamemusic/soundfonts/` (or set `$GMJUKE_SF2`); until you
+do, `.mid` files stay silent. If a `.mid` has an identically-named `.sf2` beside
+it, `gmjuke` loads it into bank 1 for AWE32-style MIDI+SoundFont pairs.
 
 ## Install
 
@@ -79,8 +105,10 @@ Drop rips under the `gme` roms folder, organised as `Category/Album/tracks`:
 ├── Arcade/Rastan (Arcade)/01 - Aggressive World.vgz
 ├── Genesis/Sonic the Hedgehog/01 Title.vgz
 ├── Master System/Phantasy Star (FM)/01 Title.vgm
-└── NES/Mega Man 2 (NES)/01 Opening.vgz
-    NES/Bionic Commando (NES)/Bionic Commando (NES).nsf   # multi-subtune file
+├── NES/Mega Man 2 (NES)/01 Opening.vgz
+├── NES/Bionic Commando (NES)/Bionic Commando (NES).nsf   # multi-subtune file
+├── SNES/Chrono Trigger (SNES).rsn                        # RAR of .spc (auto-unpacked)
+└── AdLib/Games/Dune/01 Sietch.vgz                        # OPL2 (.vgz/.vgm)
 ```
 
 Restart EmulationStation to register new files. Good sources: rips from
@@ -112,7 +140,9 @@ Standalone, run-by-hand utilities — **not** part of the player runtime — for
 filling gaps using [libretro-thumbnails](https://github.com/libretro-thumbnails)
 (no account/key):
 
-- **`fetch-art.py`** — download a cover into each music album that has none.
+- **`fetch-art.py`** — download a cover (`folder.png`) into each music album that
+  has none. Handles nested categories and tries multiple thumbnail systems per
+  album (e.g. AdLib → DOS/MAME/FBNeo); `--category X` restricts the run.
 - **`scrape-system.py`** — fetch art + build a gamelist for a whole console ROM
   system (e.g. Master System).
 - **`make-gamelist.py`** — write `<image>` tags into the `gme` gamelist so covers

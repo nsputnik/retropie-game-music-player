@@ -1,7 +1,13 @@
 # compiled engine binaries (produced by install.sh)
 src/vgmjuke
 src/gmejuke
+src/modjuke
+src/sidjuke
+src/gmjuke
 *.o
+
+# SoundFonts / assets are user-supplied, never committed
+*.sf2
 
 # runtime state
 buttons.json
@@ -9,3 +15,6 @@ buttons.json
 # python
 __pycache__/
 *.pyc
+
+# macOS
+.DS_Store
