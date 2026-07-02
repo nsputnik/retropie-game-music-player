@@ -55,6 +55,9 @@ directly under its category and *is* the album (main() special-cases album/categ
 for containers). `install.sh` installs `unar` (fail-soft). TODO: prettier names
 come from the `.rsn` filename — rename files to full titles or parse `info.txt`;
 box art for containers isn't wired (find_box_art still assumes Category/Album/track).
+SPC track names come from each file's **ID666 song title** (text tag @ offset 0x2E)
+via `track_name()`, falling back to the filename — so SNESmusic.org sets show real
+song names (e.g. "Yoshi's Island") without renaming/repacking the archives.
 
 ## Deployment reality (IMPORTANT — differs from install.sh defaults)
 `install.sh` defaults `INSTALL_DIR=/opt/retropie/emulators/gamemusic`, **but the

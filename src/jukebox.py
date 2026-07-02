@@ -573,6 +573,28 @@ def subtunes(engine, rom_path):
              "name": names.get(i, "Track %d" % i)} for i in range(1, count + 1)]
 
 
+def spc_song_title(path):
+    """Song title from an .spc file's ID666 tag (text form, offset 0x2E, 32
+    bytes). Returns '' if absent - caller falls back to the filename."""
+    try:
+        with open(path, "rb") as f:
+            f.seek(0x2E)
+            raw = f.read(32)
+    except Exception:
+        return ""
+    t = raw.split(b"\x00")[0].decode("latin-1", "ignore")
+    return "".join(c for c in t if c.isprintable()).strip()
+
+
+def track_name(path):
+    """Display name for a sibling track: SPC song title if tagged, else filename."""
+    if path.lower().endswith(".spc"):
+        title = spc_song_title(path)
+        if title:
+            return title
+    return os.path.splitext(os.path.basename(path))[0]
+
+
 def rsn_playlist(rom_path):
     """Unpack a .rsn (a RAR archive of .spc files, one SNES game's soundtrack)
     to a temp dir and return gmejuke sibling entries for its SPCs, or None."""
@@ -607,7 +629,7 @@ def rsn_playlist(rom_path):
         return None
     spcs.sort(key=natural_key)
     return [{"engine": ENGINE_GME, "file": p, "track": None,
-             "name": os.path.splitext(os.path.basename(p))[0]} for p in spcs]
+             "name": track_name(p)} for p in spcs]
 
 
 def build_playlist(rom_path):
@@ -641,7 +663,8 @@ def build_playlist(rom_path):
     files = [f for f in os.listdir(album_dir) if f.lower().endswith(sib_exts)]
     files.sort(key=natural_key)
     entries = [{"engine": engine, "file": os.path.join(album_dir, f),
-                "track": None, "name": os.path.splitext(f)[0]} for f in files]
+                "track": None, "name": track_name(os.path.join(album_dir, f))}
+               for f in files]
     sel = os.path.basename(rom_path)
     idx = next((k for k, f in enumerate(files) if f == sel), 0)
     return entries, idx
