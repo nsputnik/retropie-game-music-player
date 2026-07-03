@@ -32,10 +32,15 @@ use. This project gives you a real jukebox:
   - `gmjuke` (built on **[FluidSynth](https://www.fluidsynth.org/)**) plays
     General MIDI **MID / MIDI** using an SC-55-style GM SoundFont you supply
     (this is the authentic playback path for AWE32/GM-era DOS & Windows game music).
+  - `stjuke` (built on **[sc68 / libsc68](http://sc68.atari.org)**) plays Atari ST
+    & Amiga **SNDH / .sc68** (68000 + YM2149/Paula emulation, multi-subtune). libsc68
+    is built separately — see [sc68-buildkit](https://github.com/nsputnik/sc68-buildkit)
+    and [docs/BUILD-stjuke.md](docs/BUILD-stjuke.md).
 
-  The last three wrap apt-packaged libraries and are **optional / fail-soft**:
-  if a library or SoundFont is missing, that engine is skipped and its formats
-  simply don't appear — the core VGM/GME engines are unaffected.
+  `modjuke`/`sidjuke`/`gmjuke` wrap apt-packaged libraries and `stjuke` links
+  prebuilt libsc68; all four are **optional / fail-soft** — if a library (or MIDI
+  SoundFont) is missing, that engine is skipped and its formats simply don't
+  appear, leaving the core VGM/GME engines unaffected.
 - **SNES `.rsn` support.** SNES sets ship as `.rsn` (a RAR of `.spc` + `info.txt`).
   The player unpacks them on launch (via `unar`) and plays the SPCs as an album —
   drop `.rsn` files in as-downloaded, no manual extraction.
