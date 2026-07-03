@@ -142,7 +142,11 @@ static void apply_mode_locked(void)
 		else if (length > 0)
 			start = length;
 		else
-			start = (gModeLoops <= 0) ? base / 4 : gModeLoops * base;
+			// No length/loop metadata (common for SAP and plain NSF): guess a
+			// full song length. libgme silence-detection still ends true
+			// one-shots early; looping tunes fade at this cap. (Was base/4,
+			// which capped every metadata-less tune at ~45s.)
+			start = (gModeLoops <= 0) ? base : gModeLoops * base;
 	}
 	else
 	{

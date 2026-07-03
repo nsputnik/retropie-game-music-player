@@ -693,10 +693,25 @@ def rsn_playlist(rom_path):
              "name": track_name(p)} for p in spcs]
 
 
+def _subtune_siblings(rom_path, engine):
+    """Sorted subtune files sharing rom_path's folder that use the same engine
+    (e.g. every .sap in one composer's folder)."""
+    sib_exts = tuple(e for e, (eng, k) in EXT_ENGINE.items()
+                     if eng == engine and k == "subtune")
+    try:
+        files = [f for f in os.listdir(os.path.dirname(rom_path))
+                 if f.lower().endswith(sib_exts)]
+    except OSError:
+        files = []
+    return sorted(files, key=natural_key)
+
+
 def build_playlist(rom_path):
     """Return (entries, start_index). Container formats (.rsn) unpack to sibling
     tracks; sibling-file engines (VGM/MOD/MIDI/SPC) queue every file in the album
-    folder; subtune engines (NSF/SID/...) queue the file's subtunes."""
+    folder; subtune engines (NSF/SID/...) queue the file's subtunes - unless many
+    subtune files share the folder (a composer collection), in which case the
+    folder is the album, one track per file."""
     ext = os.path.splitext(rom_path)[1].lower()
 
     if ext in CONTAINER_EXTS:
@@ -709,6 +724,21 @@ def build_playlist(rom_path):
     engine, kind = spec
 
     if kind == "subtune":
+        album_dir = os.path.dirname(rom_path)
+        sibs = _subtune_siblings(rom_path, engine)
+        if len(sibs) > 1:
+            # A folder of many subtune files (e.g. a composer's SAP/SID set):
+            # the folder is the album, one track per file. Each entry plays the
+            # file's default subtune. No per-file --info, so this stays fast even
+            # for hundreds of files.
+            entries = [{"engine": engine, "file": os.path.join(album_dir, f),
+                        "track": None,
+                        "name": track_name(os.path.join(album_dir, f))}
+                       for f in sibs]
+            idx = next((k for k, f in enumerate(sibs)
+                        if f == os.path.basename(rom_path)), 0)
+            return entries, idx
+        # Lone subtune file (a wrapped NSF/SAP game): album = its own subtunes.
         entries = subtunes(engine, rom_path)
         if entries:
             return entries, 0
@@ -748,12 +778,16 @@ def describe(rom):
 
 def album_is_file(rom):
     """True if the album is a single file (subtune or container) rather than a
-    folder of tracks - decides how we find sibling albums."""
+    folder of tracks - decides how we find sibling albums. A subtune file that
+    shares its folder with other subtune files is part of a folder album (a
+    composer collection), so it is not treated as a lone file."""
     ext = os.path.splitext(rom)[1].lower()
     if ext in CONTAINER_EXTS:
         return True
     spec = EXT_ENGINE.get(ext)
-    return bool(spec and spec[1] == "subtune")
+    if not spec or spec[1] != "subtune":
+        return False
+    return len(_subtune_siblings(rom, spec[0])) <= 1
 
 
 def first_playable(dirpath):
