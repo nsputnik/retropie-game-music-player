@@ -726,11 +726,12 @@ def build_playlist(rom_path):
     if kind == "subtune":
         album_dir = os.path.dirname(rom_path)
         sibs = _subtune_siblings(rom_path, engine)
-        if len(sibs) > 1:
-            # A folder of many subtune files (e.g. a composer's SAP/SID set):
-            # the folder is the album, one track per file. Each entry plays the
-            # file's default subtune. No per-file --info, so this stays fast even
-            # for hundreds of files.
+        own = subtunes(engine, rom_path) if len(sibs) > 1 else None
+        if len(sibs) > 1 and not (own and len(own) > 1):
+            # Many subtune files share a folder AND the selected one is a single
+            # song (a composer/demo collection, e.g. ZX Spectrum Demos/*.ay):
+            # the folder is the album, one track per file (its default subtune).
+            # No per-file --info, so this stays fast even for hundreds of files.
             entries = [{"engine": engine, "file": os.path.join(album_dir, f),
                         "track": None,
                         "name": track_name(os.path.join(album_dir, f))}
@@ -738,8 +739,9 @@ def build_playlist(rom_path):
             idx = next((k for k, f in enumerate(sibs)
                         if f == os.path.basename(rom_path)), 0)
             return entries, idx
-        # Lone subtune file (a wrapped NSF/SAP game): album = its own subtunes.
-        entries = subtunes(engine, rom_path)
+        # A multi-song file (NSF/AY game, whether wrapped or flat among other
+        # games) or a lone file: the album is this file's own subtunes.
+        entries = own if own is not None else subtunes(engine, rom_path)
         if entries:
             return entries, 0
         # fallback: play the file as a single track
@@ -766,7 +768,15 @@ def describe(rom):
     category, album, art_path). Containers/one-file albums sit directly under
     their category and *are* the album; folder-albums use their folder."""
     entries, idx = build_playlist(rom)
-    if os.path.splitext(rom)[1].lower() in CONTAINER_EXTS:
+    ext = os.path.splitext(rom)[1].lower()
+    spec = EXT_ENGINE.get(ext)
+    # A flat multi-song game (an .ay/.nsf sitting among sibling games) is its own
+    # album: name it after the file, with its folder as the category - like a
+    # container. Wrapped/lone files and folder-albums use their folder instead.
+    flat_file_album = (spec and spec[1] == "subtune"
+                       and len(_subtune_siblings(rom, spec[0])) > 1
+                       and album_is_file(rom))
+    if ext in CONTAINER_EXTS or flat_file_album:
         album = strip_paren_suffix(os.path.splitext(os.path.basename(rom))[0])
         category = os.path.basename(os.path.dirname(rom))
     else:
@@ -778,16 +788,20 @@ def describe(rom):
 
 def album_is_file(rom):
     """True if the album is a single file (subtune or container) rather than a
-    folder of tracks - decides how we find sibling albums. A subtune file that
-    shares its folder with other subtune files is part of a folder album (a
-    composer collection), so it is not treated as a lone file."""
+    folder of tracks - decides how we find sibling albums. A single-song subtune
+    file that shares its folder with others is part of a folder album (a
+    composer/demo collection); a multi-song subtune file (an NSF/AY game) is its
+    own album even when it sits flat among sibling games."""
     ext = os.path.splitext(rom)[1].lower()
     if ext in CONTAINER_EXTS:
         return True
     spec = EXT_ENGINE.get(ext)
     if not spec or spec[1] != "subtune":
         return False
-    return len(_subtune_siblings(rom, spec[0])) <= 1
+    if len(_subtune_siblings(rom, spec[0])) <= 1:
+        return True
+    own = subtunes(spec[0], rom)
+    return bool(own and len(own) > 1)
 
 
 def first_playable(dirpath):
