@@ -113,12 +113,14 @@ Drop rips under the `gme` roms folder, organised as `Category/Album/tracks`:
 ├── NES/Mega Man 2 (NES)/01 Opening.vgz
 ├── NES/Bionic Commando (NES)/Bionic Commando (NES).nsf   # multi-subtune file
 ├── SNES/Chrono Trigger (SNES).rsn                        # RAR of .spc (auto-unpacked)
-└── AdLib/Games/Dune/01 Sietch.vgz                        # OPL2 (.vgz/.vgm)
+├── AdLib/Games/Dune/01 Sietch.vgz                        # OPL2 (.vgz/.vgm)
+└── Atari ST/Mad Max/Wings of Death.sndh                  # SNDH (68000+YM2149, multi-subtune)
 ```
 
 Restart EmulationStation to register new files. Good sources: rips from
 [vgmrips.net](https://vgmrips.net/), [smspower.org](https://www.smspower.org/),
-and NSFs from [Zophar's Domain](https://www.zophar.net/music).
+NSFs from [Zophar's Domain](https://www.zophar.net/music), and Atari ST **SNDH**
+from the [SNDH Archive](https://sndh.atari.org/download.php).
 
 ![nsf](docs/screenshot-nsf.png)
 
