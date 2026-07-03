@@ -8,9 +8,15 @@ Gerard's Atari ST & Amiga music player (68000 + YM-2149 / Paula emulation).
   <https://github.com/Zeinok/sc68>
 - Music: the **[SNDH Archive](https://sndh.atari.org/)** (~9,900 tunes).
 
+> **Just want the libraries?** They're packaged, prebuilt, in a standalone repo:
+> **[sc68-buildkit](https://github.com/nsputnik/sc68-buildkit)** — grab
+> `prebuilt/linux-armv7-glibc2.28/` and skip straight to step 4. The kit also has
+> a one-command cross-build for other targets. The rest of this doc is a summary;
+> sc68-buildkit is the source of truth for the build.
+
 Unlike libvgm/libgme, `install.sh` does **not** build libsc68 automatically —
-its source tree needs a few fixes and the build is heavy, so it's done once and
-the resulting static libs are kept. This documents that one-time process.
+its source tree needs a few fixes and the build is heavy, so it's done once (via
+sc68-buildkit) and the resulting static libs are kept on the Pi.
 
 ## 1. Get the source
 
