@@ -338,7 +338,12 @@ class Screen:
         # --- status bar ---
         sy = self.h - 56
         d.line([(pad, sy - 8), (self.w - pad, sy - 8)], fill=DIM, width=1)
-        loop = "Loop ∞" if st.loop_mode == "oo" else "Loop %s" % st.loop_mode
+        if not st.loopable:
+            loop = "No loop point"
+        elif st.loop_mode == "oo":
+            loop = "Loop ∞"
+        else:
+            loop = "Loop %s" % st.loop_mode
         mode = PLAY_LABELS[st.play_mode]
         if st.total and st.total > 0:
             tt = "%s / %s" % (fmt_time(st.cur), fmt_time(st.total))
@@ -410,6 +415,7 @@ class State:
         self.cur = 0.0
         self.total = None
         self.playing = False
+        self.loopable = True            # engine reports LOOP 0 for no-loop tracks
 
     @property
     def loop_mode(self):
@@ -525,6 +531,7 @@ class Jukebox:
         self.stop_proc()
         self.state.cur = 0.0
         self.state.total = None
+        self.state.loopable = True       # until the engine says otherwise
         self.state.playing = True
         entry = self.entries[self.state.idx]
         cmd = [entry["engine"]] + self.engine_args()
@@ -555,6 +562,8 @@ class Jukebox:
                     self.state.total = None if tot < 0 else tot
                 except (IndexError, ValueError):
                     pass
+            elif line.startswith("LOOP "):
+                self.state.loopable = line.split()[1] != "0"
 
     def stop_proc(self):
         if self.proc and self.proc.poll() is None:
@@ -591,6 +600,8 @@ class Jukebox:
         return True
 
     def cycle_loop(self):
+        if not self.state.loopable:
+            return                       # no loop point: A does nothing
         self.state.loop_index = (self.state.loop_index + 1) % len(LOOP_MODES)
         # apply live so the song keeps playing; only restart if no live process
         if self.proc is not None and self.proc.poll() is None:

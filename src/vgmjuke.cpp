@@ -324,6 +324,10 @@ int main(int argc, char* argv[])
 	const char* const* tags = player->GetTags();
 	PrintTag("GAME", tags, "GAME");
 	PrintTag("TITLE", tags, "TITLE");
+	// Report whether this file carries a loop point (0 loop ticks = none, e.g.
+	// many Genesis VGM rips). The jukebox shows "No loop point" and disables the
+	// loop button for such tracks.
+	printf("LOOP %d\n", player->GetLoopTicks() > 0 ? 1 : 0);
 	fflush(stdout);
 
 	mainPlr.Start();
