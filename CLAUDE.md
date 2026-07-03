@@ -15,16 +15,35 @@ format-agnostic:
 
 - **Invoke:** `engine [--infinite | --loops N] --fade <sec> [--track N] <file>`
 - **stdout:** `POS <cur> <total>` lines (`total < 0` = unknown/looping forever) — drives the clock
+- **stdout (optional, once):** `LOOP 0` = this track has no loop point → jukebox shows
+  **"No loop point"** and the loop (A) button does nothing. Emit `LOOP 1` or nothing when
+  loopable (the default). Only `vgmjuke` emits it (from the VGM loop offset); formats that
+  play forever or whole-file-repeat (NSF/SAP/SID/MOD/MIDI/SNDH) stay loopable.
 - **stdin (live):** `inf\n` or `loops N\n` — change loop mode without restarting
 - **`--info <file>`:** print `TRACKS <n>` then `TRK <i> <len_ms> <name>` per subtune (multi-subtune formats only)
 
 `jukebox.py` routes by file extension via `EXT_ENGINE` (built from `_ENGINE_SPECS`).
 Two engine "kinds":
-- **sibling** — one song per file; the album folder's files are the queue, filenames are track names (VGM, MOD, MIDI).
-- **subtune** — one file, many subtunes; queried with `--info`/`--track`, shown as numbered tracks (NSF, SID).
+- **sibling** — one song per file; the album folder's files are the queue, filenames are track names (VGM, MOD, MIDI, SPC).
+- **subtune** — one file, many subtunes; queried with `--info`/`--track` (NSF, SID, SAP, AY, SNDH). How its *album* is built depends on the folder — see below.
 
 **Fail-soft:** an engine is only routable if its binary exists on disk, so a
 missing/failed engine silently drops its formats instead of crashing.
+
+### Subtune album shapes (how a subtune file becomes an album)
+`build_playlist()` decides **per selected file** using a fast, header-based
+subtune count — `_subtune_count()` reads the file header (**no subprocess**):
+PSID songs @0x0E, NSF @0x06, SAP `SONGS` tag, SNDH `##` tag; unknown → 1.
+- **Lone subtune file in its folder** (wrapped `Game (NES)/Game.nsf`, or a game SAP) →
+  album = that file's own subtunes.
+- **Multi-song file among siblings** (a flat game: ZX `.ay`, a C64/ST game soundtrack) →
+  its own subtune album; `describe()` names it after the *file* (folder = category), like a container.
+- **Single-song file among siblings** (composer/demo collections — Pokey SAP, C64 SID,
+  ZX/CPC demos) → the *folder* is the album, one track per single-song file. Multi-song
+  siblings are **excluded** here (they're their own albums), so a composer list never
+  contains an entry that would only play one of a multi-tune file's subtunes.
+This is why C64/Pokey/ST browse by composer while ZX/Amstrad games each open as their own
+multi-tune album — same code, decided by the header count.
 
 ## Engines
 | Engine | Library | Formats | Build |
@@ -34,6 +53,7 @@ missing/failed engine silently drops its formats instead of crashing.
 | `modjuke` | libopenmpt (apt) | MOD/XM/S3M/IT/… | apt, fail-soft |
 | `sidjuke` | libsidplayfp (apt) | SID/PSID | apt, fail-soft |
 | `gmjuke` | FluidSynth (apt) | MID/MIDI (General MIDI) | apt, fail-soft |
+| `stjuke` | sc68/libsc68 (prebuilt) | SNDH/.sc68 (Atari ST/Amiga) | prebuilt libs, fail-soft |
 
 - `vgmjuke`/`gmejuke` output audio through libvgm's `AudioStream` driver.
 - `modjuke`/`sidjuke`/`gmjuke` render PCM and write straight to ALSA via
@@ -62,6 +82,27 @@ song names (e.g. "Yoshi's Island") without renaming/repacking the archives.
 archive's info.txt line 1 ("Super Mario World (SNES).rsn"); the .rsn album name
 is what the jukebox shows (main() strips the trailing "(SNES)" for display).
 
+### Atari ST / Amiga: SNDH via sc68 (`stjuke`)
+`stjuke` wraps **sc68 / libsc68** (Benjamin Gerard, GPLv3 — 68000 + YM2149/Paula
+emulation) for `.sndh`/`.sc68` (**subtune** kind). Unlike the other engines,
+libsc68 is **not apt-packaged** and its 2016 SVN source tree won't build as-is
+(missing `vcversion.sh`, broken meta-package bootstrap, needs `as68` first). It's
+built once and the **prebuilt static libs live in a separate repo,
+[sc68-buildkit](https://github.com/nsputnik/sc68-buildkit)** (armv7 set staged on
+the Pi at `~/src/sc68-armv7/{lib,include}`). Full recipe: `docs/BUILD-stjuke.md`.
+- **Link:** `lib{sc68,dial68,io68,emu68,file68,unice68}.a` (start/end-group) +
+  `-lao -lz -lm -lpthread -ldl -lasound`. Runtime dep: **libao** (`libao4`).
+- **Length:** the SNDH's own duration (`sc68_music_info().trk.time_ms`), else
+  `DEFAULT_LEN`; loops the subtune with `SC68_INF_LOOP` and bounds length itself
+  (like `sidjuke`). Reports subtune count/durations via `--info`.
+- **Per-subtune names:** sc68 does **not** decode the SNDH `!#SN` name tag, so
+  `stjuke` parses it from the raw file — validating the offset table structurally
+  (offsets start at the table end and never decrease) so **malformed tables fall
+  back to "Track N"** instead of garbage. Only ~45 of the ~5,900-tune SNDH
+  archive actually carry names; most show Track N.
+- Music: the [SNDH Archive](https://sndh.atari.org/download.php), organised by
+  composer — deployed as `gme/Atari ST/<Composer>/*.sndh`.
+
 ## Deployment reality (IMPORTANT — differs from install.sh defaults)
 `install.sh` defaults `INSTALL_DIR=/opt/retropie/emulators/gamemusic`, **but the
 live GPi Case Pi was installed under the older name**:
@@ -83,9 +124,20 @@ no console-art fallback, so they show art only if an album `folder.png` is prese
 - **subtune** albums: one file per album folder (e.g. `Game (NES)/Game (NES).nsf`,
   or one `.sid` per folder).
 
-## New categories seeded (2026-06)
+## New categories seeded
+**2026-06**
 - `C64/` — curated HVSC top-composer albums (SID). Full HVSC is 61k tunes — curate!
 - `Amiga/` — tracker `.mod` albums.
+
+**2026-07** (chip formats — all play on existing engines except Atari ST)
+- `Pokey/` — Atari 800 POKEY `.sap` (`gmejuke`), from ASMA: `Games/` + top `Composers/`.
+- `ZX Spectrum/`, `Amstrad CPC/` — AY-3-8910/YM2149 `.ay` (`gmejuke`), from Project AY.
+  Flattened to `Games/*.ay` (multi-subtune, one level) + `Demos/*.ay` (single-song, one list).
+- `Apple IIgs ES5503/` — vgmrips ES5503 VGM game packs (`vgmjuke`). NOTE: native IIgs
+  SoundSmith/NoiseTracker-GS songs are **not** playable (no lib decodes them; libxmp & libopenmpt fail).
+- `Atari ST/` — the full **SNDH archive**, 5,897 tunes by composer (`stjuke`; see above).
+- Formats supported but not yet seeded: **Game Boy `.gbs`**, **PC Engine `.hes`** (both
+  `gmejuke`, already routed) — just need content. Modland (huge, by-composer) for `modjuke`.
 
 ### PC/DOS is organized by SYNTH, not platform (categories map to engines)
 "DOS" was too broad — it spans three different synthesis models needing three
@@ -107,7 +159,7 @@ engines. So the top-level category IS the synth:
 ## Planned next engines (design agreed, not built)
 - `mt32juke` — Munt / libmt32emu (source build, user-supplied MT-32 ROMs) for the
   MT-32 DOS corpus. Category-routed: `gme/MT-32/…` → mt32juke, `gme/DOS|GM/…` → gmjuke.
-- `stjuke` — sc68 (source build, gated/fail-soft) for Atari ST `.sndh`/`.ym`.
+- ~~`stjuke` — sc68 for Atari ST `.sndh`~~ **BUILT** (see the sc68/SNDH section above).
 
 ## Play modes (Select cycles) & album navigation
 `State.play_index` over `PLAY_MODES = [SINGLE, ALBUM, ALL, SHUFFLE]` (default ALBUM).
