@@ -704,6 +704,30 @@ def rsn_playlist(rom_path):
              "name": track_name(p)} for p in spcs]
 
 
+def _subtune_count(path):
+    """Best-effort subtune count from the file header - fast, no subprocess.
+    Returns 1 for plain single-song files and for anything we can't parse, so a
+    folder album treats those as a single track."""
+    ext = os.path.splitext(path)[1].lower()
+    try:
+        with open(path, "rb") as f:
+            head = f.read(2048)
+    except OSError:
+        return 1
+    try:
+        if ext in (".sid", ".psid") and head[:4] in (b"PSID", b"RSID"):
+            return max(1, struct.unpack_from(">H", head, 0x0E)[0])  # PSID songs
+        if ext == ".nsf" and head[:4] == b"NESM":
+            return max(1, head[0x06])                                # NSF songs
+        if ext == ".sap":
+            m = re.search(rb"SONGS\s+(\d+)", head)                   # SAP header tag
+            if m:
+                return max(1, int(m.group(1)))
+    except Exception:
+        return 1
+    return 1
+
+
 def _subtune_siblings(rom_path, engine):
     """Sorted subtune files sharing rom_path's folder that use the same engine
     (e.g. every .sap in one composer's folder)."""
@@ -737,22 +761,30 @@ def build_playlist(rom_path):
     if kind == "subtune":
         album_dir = os.path.dirname(rom_path)
         sibs = _subtune_siblings(rom_path, engine)
-        own = subtunes(engine, rom_path) if len(sibs) > 1 else None
-        if len(sibs) > 1 and not (own and len(own) > 1):
-            # Many subtune files share a folder AND the selected one is a single
-            # song (a composer/demo collection, e.g. ZX Spectrum Demos/*.ay):
-            # the folder is the album, one track per file (its default subtune).
-            # No per-file --info, so this stays fast even for hundreds of files.
+        if len(sibs) > 1 and _subtune_count(rom_path) <= 1:
+            # The selected file is a single song sharing its folder with others
+            # (a composer/demo collection, e.g. ZX Spectrum Demos or a C64
+            # composer's standalone tunes): the album is the folder's *single-
+            # song* files, one track each. Multi-subtune files (game soundtracks,
+            # sound-effect collections) are their own albums, so they don't
+            # appear here as entries that would only play one of their subtunes.
+            # Counts come from headers (no --info), so this is fast for hundreds
+            # of files.
+            singles = [f for f in sibs
+                       if _subtune_count(os.path.join(album_dir, f)) <= 1]
+            if os.path.basename(rom_path) not in singles:
+                singles.append(os.path.basename(rom_path))
+                singles.sort(key=natural_key)
             entries = [{"engine": engine, "file": os.path.join(album_dir, f),
                         "track": None,
                         "name": track_name(os.path.join(album_dir, f))}
-                       for f in sibs]
-            idx = next((k for k, f in enumerate(sibs)
+                       for f in singles]
+            idx = next((k for k, f in enumerate(singles)
                         if f == os.path.basename(rom_path)), 0)
             return entries, idx
-        # A multi-song file (NSF/AY game, whether wrapped or flat among other
-        # games) or a lone file: the album is this file's own subtunes.
-        entries = own if own is not None else subtunes(engine, rom_path)
+        # A multi-song file (NSF/AY game, a C64 game soundtrack) or a lone file:
+        # the album is this file's own subtunes.
+        entries = subtunes(engine, rom_path)
         if entries:
             return entries, 0
         # fallback: play the file as a single track
@@ -811,8 +843,7 @@ def album_is_file(rom):
         return False
     if len(_subtune_siblings(rom, spec[0])) <= 1:
         return True
-    own = subtunes(spec[0], rom)
-    return bool(own and len(own) > 1)
+    return _subtune_count(rom) > 1
 
 
 def first_playable(dirpath):
