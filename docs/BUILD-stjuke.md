@@ -13,6 +13,12 @@ Gerard's Atari ST & Amiga music player (68000 + YM-2149 / Paula emulation).
 > `prebuilt/linux-armv7-glibc2.28/` and skip straight to step 4. The kit also has
 > a one-command cross-build for other targets. The rest of this doc is a summary;
 > sc68-buildkit is the source of truth for the build.
+>
+> **Why a separate repo?** Getting `libsc68` to compile again is generic work —
+> useful to *anyone* playing SNDH / `.sc68` on modern Linux or ARM, not just this
+> jukebox. Keeping it in its own reusable project (prebuilt libs + recipe) means
+> nobody has to repeat the fight, and this repo just consumes it as a dependency
+> — the same way it depends on libvgm, libgme, etc.
 
 Unlike libvgm/libgme, `install.sh` does **not** build libsc68 automatically —
 its source tree needs a few fixes and the build is heavy, so it's done once (via
