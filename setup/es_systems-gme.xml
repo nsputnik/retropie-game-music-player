@@ -2,7 +2,7 @@
     <name>gme</name>
     <fullname>Game Music</fullname>
     <path>@ROMS@</path>
-    <extension>.vgm .vgz .gbs .nsf .nsfe .spc .ay .gym .hes .kss .sap .s98 .dro .sid .psid .mod .xm .s3m .it .mtm .med .stm .okt .ahx .hvl .mid .midi .rmi .rsn .m3u .VGM .VGZ .GBS .NSF .NSFE .SPC .AY .GYM .HES .KSS .SAP .S98 .DRO .SID .PSID .MOD .XM .S3M .IT .MTM .MED .STM .OKT .AHX .HVL .MID .MIDI .RMI .RSN .M3U</extension>
+    <extension>.vgm .vgz .gbs .nsf .nsfe .spc .ay .gym .hes .kss .sap .s98 .dro .sid .psid .mod .xm .s3m .it .mtm .med .stm .okt .ahx .hvl .mid .midi .rmi .rsn .m3u .VGM .VGZ .GBS .NSF .NSFE .SPC .AY .GYM .HES .KSS .SAP .S98 .DRO .SID .PSID .MOD .XM .S3M .IT .MTM .MED .STM .OKT .AHX .HVL .MID .MIDI .RMI .RSN .M3U .sndh .SNDH .sc68 .SC68</extension>
     <command>/opt/retropie/supplementary/runcommand/runcommand.sh 0 _SYS_ gme %ROM%</command>
     <platform>gme</platform>
     <theme>gme</theme>

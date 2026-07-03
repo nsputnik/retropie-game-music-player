@@ -191,6 +191,8 @@ stdin/stdout (`POS` position lines out; `loops`/`inf` loop-mode commands in).
 
 - **[libvgm](https://github.com/ValleyBell/libvgm)** by ValleyBell — VGM playback engine.
 - **[game-music-emu](https://github.com/libgme/game-music-emu)** — NSF/GBS/SPC/… playback (LGPL-2.1).
+- **[libopenmpt](https://lib.openmpt.org/libopenmpt/)** (MOD/XM/…), **[libsidplayfp](https://github.com/libsidplayfp/libsidplayfp)** (SID) and **[FluidSynth](https://www.fluidsynth.org/)** (GM MIDI) — the optional apt-packaged engines.
+- **[sc68](http://sc68.atari.org)** by Benjamin Gerard — Atari ST/Amiga **SNDH** playback via the `stjuke` engine (GPL; built separately, see [docs/BUILD-stjuke.md](docs/BUILD-stjuke.md)).
 - **[libretro-thumbnails](https://github.com/libretro-thumbnails)** — box art source for the optional tools.
 
 This project's own code is licensed **GPL-2.0** (see [LICENSE](LICENSE)). The

@@ -40,6 +40,7 @@ ENGINE_GME = os.path.join(HERE, "gmejuke")   # libgme: NSF/GBS/...
 ENGINE_MOD = os.path.join(HERE, "modjuke")   # libopenmpt: MOD/XM/S3M/IT/...
 ENGINE_SID = os.path.join(HERE, "sidjuke")   # libsidplayfp: SID/PSID
 ENGINE_GM = os.path.join(HERE, "gmjuke")     # FluidSynth: MID/MIDI (GM)
+ENGINE_ST = os.path.join(HERE, "stjuke")     # libsc68: Atari ST/Amiga SNDH/sc68
 BTN_MAP_FILE = os.path.join(HERE, "buttons.json")
 JS_DEV = "/dev/input/js0"
 FB_DEV = "/dev/fb0"
@@ -84,6 +85,7 @@ MOD_EXTS = (".mod", ".xm", ".s3m", ".it", ".mtm", ".mptm", ".med", ".stm",
             ".okt", ".ptm", ".dbm", ".digi", ".ahx", ".hvl", ".mo3", ".umx")
 SID_EXTS = (".sid", ".psid")
 MIDI_EXTS = (".mid", ".midi", ".rmi")
+SNDH_EXTS = (".sndh", ".sc68")               # Atari ST/Amiga; multi-subtune
 
 # Container formats: not decoded directly - unpacked to sibling tracks first.
 # .rsn = a RAR archive of .spc files (one SNES game's soundtrack).
@@ -98,6 +100,7 @@ _ENGINE_SPECS = [
     (ENGINE_MOD, MOD_EXTS, "sibling"),
     (ENGINE_SID, SID_EXTS, "subtune"),
     (ENGINE_GM, MIDI_EXTS, "sibling"),
+    (ENGINE_ST, SNDH_EXTS, "subtune"),
 ]
 
 
@@ -723,6 +726,12 @@ def _subtune_count(path):
             m = re.search(rb"SONGS\s+(\d+)", head)                   # SAP header tag
             if m:
                 return max(1, int(m.group(1)))
+        if ext in (".sndh", ".sc68"):
+            j = head.find(b"SNDH")                                   # SNDH subtune count
+            if j >= 0:
+                m = re.search(rb"##(\d+)", head[j:j + 2048])
+                if m:
+                    return max(1, int(m.group(1)))
     except Exception:
         return 1
     return 1
