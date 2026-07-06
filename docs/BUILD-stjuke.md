@@ -3,6 +3,21 @@
 `stjuke` is a thin wrapper (like `sidjuke`) around **sc68 / libsc68** — Benjamin
 Gerard's Atari ST & Amiga music player (68000 + YM-2149 / Paula emulation).
 
+> **`stjuke` is now the fallback, not the primary SNDH engine.** `psgjuke`
+> (psgplay — see [BUILD-psgjuke.md](BUILD-psgjuke.md)) is preferred for `.sndh`
+> because it emulates the **STE DMA sound**, which sc68 does not — so it plays
+> the STe / MaxYMiser tunes sc68 renders thin. `jukebox.py` lists `psgjuke`
+> ahead of `stjuke`, and `psgjuke` `exec()`s `stjuke` for anything it can't load.
+> That leaves sc68 one genuinely useful niche psgplay doesn't cover:
+>
+> - **ICE-packed SNDH** — `psgplay_init()` needs *uncompressed* SNDH, and refuses
+>   packed files; libsc68 depacks ICE (via unice68) transparently.
+> - **`.sc68` files and Amiga (Paula) tunes** — psgplay is Atari ST/STE only.
+>
+> So keep `stjuke` installed as the fallback. If you only have plain (unpacked)
+> `.sndh` — as the vgmrips/SNDH-archive rips generally are — psgplay handles
+> everything and sc68 simply never gets invoked.
+
 - Player: **sc68**, © Benjamin Gerard — <http://sc68.atari.org>, GPL
   Source: <https://sourceforge.net/p/sc68> (canonical) · mirror
   <https://github.com/Zeinok/sc68>

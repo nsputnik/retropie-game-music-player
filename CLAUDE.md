@@ -53,7 +53,8 @@ multi-tune album — same code, decided by the header count.
 | `modjuke` | libopenmpt (apt) | MOD/XM/S3M/IT/… | apt, fail-soft |
 | `sidjuke` | libsidplayfp (apt) | SID/PSID | apt, fail-soft |
 | `gmjuke` | FluidSynth (apt) | MID/MIDI (General MIDI) | apt, fail-soft |
-| `stjuke` | sc68/libsc68 (prebuilt) | SNDH/.sc68 (Atari ST/Amiga) | prebuilt libs, fail-soft |
+| `psgjuke` | psgplay/libpsgplay (source) | SNDH (Atari ST/**STE DMA**) | source, fail-soft — **preferred for SNDH** |
+| `stjuke` | sc68/libsc68 (prebuilt) | SNDH/.sc68 (Atari ST/Amiga) | prebuilt libs, fail-soft — **fallback** behind psgjuke |
 
 - `vgmjuke`/`gmejuke` output audio through libvgm's `AudioStream` driver.
 - `modjuke`/`sidjuke`/`gmjuke` render PCM and write straight to ALSA via
@@ -82,9 +83,35 @@ song names (e.g. "Yoshi's Island") without renaming/repacking the archives.
 archive's info.txt line 1 ("Super Mario World (SNES).rsn"); the .rsn album name
 is what the jukebox shows (main() strips the trailing "(SNES)" for display).
 
-### Atari ST / Amiga: SNDH via sc68 (`stjuke`)
+### Atari ST / STE: SNDH via psgplay (`psgjuke`) — PRIMARY
+`psgjuke` wraps **psgplay / libpsgplay** (Fredrik Noring, GPL-2.0 — 68000 +
+YM2149 PSG + **STE DMA sound** + LMC1992 mixer) for `.sndh` (**subtune** kind). It
+is the **preferred** SNDH engine because it emulates the STE DMA sound that sc68
+does **not** — so it plays the STe / MaxYMiser tunes (sampled drums/bass) sc68
+renders thin. Verified: across 116 tunes (65 MaxYMiser/gwEm + 51 random) psgplay
+played 100%, 0 failures, consistently fuller output than sc68 on DMA tracks.
+- **Build:** unlike sc68, psgplay builds cleanly **on the Pi** in ~55 s / ~90 MB,
+  so `install.sh` builds it automatically (like libvgm/libgme) — no buildkit. Build
+  the **static** target `lib/psgplay/libpsgplay.a` (full `install-lib` trips over a
+  shared-lib symlink on shallow clones). Recipe: `docs/BUILD-psgjuke.md`.
+- **Link:** self-contained `libpsgplay.a` (bundles Musashi 68000, cf2149 PSG,
+  cf68901 MFP, cf300588 STE DMA) + `-lasound -lm`. No runtime deps beyond ALSA.
+- **API:** `psgplay_init(data,size,track,44100)` → `psgplay_read_stereo()` loop
+  (int16 L/R = interleaved S16 for `alsa_out.h`). psgplay parses SNDH natively, so
+  `--info` gets subtune count (`sndh_tag_subtune_count`), per-subtune duration
+  (`sndh_tag_subtune_time`) and **names** (`sndh_tag_subtune_name`) directly — no
+  hand-rolled `!#SN` parsing (contrast `stjuke`). `psgplay_init` needs **uncompressed**
+  SNDH; if `sndh_identify()` fails or init fails, `psgjuke` `exec()`s `stjuke`.
+- `jukebox.py` lists `psgjuke` before `stjuke` for `SNDH_EXTS` (fail-soft setdefault:
+  if psgjuke didn't build, SNDH still routes to sc68).
+
+### Atari ST / Amiga: SNDH/.sc68 via sc68 (`stjuke`) — FALLBACK
 `stjuke` wraps **sc68 / libsc68** (Benjamin Gerard, GPLv3 — 68000 + YM2149/Paula
-emulation) for `.sndh`/`.sc68` (**subtune** kind). Unlike the other engines,
+emulation) for `.sndh`/`.sc68` (**subtune** kind). It is the **fallback** behind
+`psgjuke`, and covers the two cases psgplay can't: **ICE-packed SNDH** (psgplay
+needs uncompressed data; libsc68 depacks ICE via unice68) and **`.sc68`/Amiga
+(Paula)** tunes (psgplay is ST/STE only). With plain unpacked `.sndh` — as the
+SNDH-archive rips are — psgplay handles everything and sc68 never fires. Unlike the other engines,
 libsc68 is **not apt-packaged** and its 2016 SVN source tree won't build as-is
 (missing `vcversion.sh`, broken meta-package bootstrap, needs `as68` first). It's
 built once and the **prebuilt static libs live in a separate repo,
@@ -159,7 +186,8 @@ engines. So the top-level category IS the synth:
 ## Planned next engines (design agreed, not built)
 - `mt32juke` — Munt / libmt32emu (source build, user-supplied MT-32 ROMs) for the
   MT-32 DOS corpus. Category-routed: `gme/MT-32/…` → mt32juke, `gme/DOS|GM/…` → gmjuke.
-- ~~`stjuke` — sc68 for Atari ST `.sndh`~~ **BUILT** (see the sc68/SNDH section above).
+- ~~`stjuke` — sc68 for Atari ST `.sndh`~~ **BUILT** (now the fallback; see the sc68/SNDH section above).
+- ~~`psgjuke` — psgplay for Atari ST/STE `.sndh` (STE DMA sound)~~ **BUILT** — the preferred SNDH engine (see the psgplay/SNDH section above).
 
 ## Play modes (Select cycles) & album navigation
 `State.play_index` over `PLAY_MODES = [SINGLE, ALBUM, ALL, SHUFFLE]` (default ALBUM).

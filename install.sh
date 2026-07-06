@@ -57,6 +57,36 @@ mkdir -p "$SRC/game-music-emu/build"
   cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF ..
   make -j"$JOBS" )
 
+# --- 3b. build libpsgplay + psgjuke (Atari ST/STE SNDH; STE DMA sound) --------
+# psgplay (frno7) emulates the 68000 + YM2149 PSG + *STE DMA sound* + LMC1992
+# mixer, so it plays the STe / MaxYMiser tunes that sc68 renders thin. Unlike
+# libsc68 (which needs source fixes and is too heavy for a Pi Zero 2 W - see
+# docs/BUILD-stjuke.md), psgplay builds cleanly on the Pi in about a minute, so
+# we build it here like libvgm/libgme. It is FAIL-SOFT: if it doesn't build, the
+# core player still installs and SNDH falls back to stjuke (if present).
+# We build only the STATIC lib target on purpose: the full 'install-lib' also
+# builds a shared lib whose install trips over a self-referential symlink on
+# shallow clones (harmless; the jukebox links the static .a).
+echo "==> Building libpsgplay + psgjuke (Atari ST/STE SNDH; non-fatal)"
+mkdir -p "$INSTALL_DIR"
+if [ ! -d "$SRC/psgplay" ]; then
+    git clone --depth 1 --recurse-submodules --shallow-submodules \
+        https://github.com/frno7/psgplay "$SRC/psgplay" || true
+fi
+if [ -d "$SRC/psgplay" ] && ( cd "$SRC/psgplay" && make -j"$JOBS" lib/psgplay/libpsgplay.a ); then
+    if g++ -O2 -I"$SRC/psgplay/include" "$HERE/src/psgjuke.cpp" \
+         -o "$INSTALL_DIR/psgjuke" "$SRC/psgplay/lib/psgplay/libpsgplay.a" \
+         -lasound -lm; then
+        chmod +x "$INSTALL_DIR/psgjuke"
+        echo "    psgjuke OK (preferred SNDH engine; STE DMA sound)"
+    else
+        rm -f "$INSTALL_DIR/psgjuke"
+        echo "!! psgjuke failed to build - SNDH falls back to stjuke if present (non-fatal)"
+    fi
+else
+    echo "!! libpsgplay build failed/skipped - SNDH via stjuke if present (non-fatal)"
+fi
+
 # --- 4. compile the engines ---------------------------------------------------
 echo "==> Compiling engines (vgmjuke, gmejuke)"
 mkdir -p "$INSTALL_DIR"

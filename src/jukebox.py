@@ -41,6 +41,7 @@ ENGINE_MOD = os.path.join(HERE, "modjuke")   # libopenmpt: MOD/XM/S3M/IT/...
 ENGINE_SID = os.path.join(HERE, "sidjuke")   # libsidplayfp: SID/PSID
 ENGINE_GM = os.path.join(HERE, "gmjuke")     # FluidSynth: MID/MIDI (GM)
 ENGINE_ST = os.path.join(HERE, "stjuke")     # libsc68: Atari ST/Amiga SNDH/sc68
+ENGINE_PSG = os.path.join(HERE, "psgjuke")   # libpsgplay: Atari ST/STE SNDH (STE DMA)
 BTN_MAP_FILE = os.path.join(HERE, "buttons.json")
 JS_DEV = "/dev/input/js0"
 FB_DEV = "/dev/fb0"
@@ -100,6 +101,11 @@ _ENGINE_SPECS = [
     (ENGINE_MOD, MOD_EXTS, "sibling"),
     (ENGINE_SID, SID_EXTS, "subtune"),
     (ENGINE_GM, MIDI_EXTS, "sibling"),
+    # SNDH: prefer psgjuke (psgplay - emulates STE DMA sound, so it plays the
+    # STe/MaxYMiser tunes sc68 renders thin); it exec()s stjuke as a fallback for
+    # .sc68 / ICE-packed / anything it can't load. stjuke listed second so that if
+    # psgjuke didn't build, SNDH still routes to sc68 (fail-soft via setdefault).
+    (ENGINE_PSG, SNDH_EXTS, "subtune"),
     (ENGINE_ST, SNDH_EXTS, "subtune"),
 ]
 
